@@ -95,8 +95,67 @@ export default function WorkingStorefront() {
         status: s.status
       })));
 
+      // Debug localStorage directly
+      console.log('🔍 Raw localStorage stores:', localStorage.getItem('stores'));
+
+      // Also check other possible storage keys
+      console.log('🔍 All localStorage keys:', Object.keys(localStorage));
+
       if (stores.length === 0) {
         console.warn('❌ No stores found in localStorage');
+
+        // Try to find any store data with different patterns
+        Object.keys(localStorage).forEach(key => {
+          if (key.includes('store') || key.includes('Store')) {
+            console.log(`🔍 Found store-related key: ${key} =`, localStorage.getItem(key));
+          }
+        });
+
+        // Try to get data from sessionStorage as fallback
+        console.log('🔍 Checking sessionStorage...');
+        const sessionStores = sessionStorage.getItem('stores');
+        if (sessionStores) {
+          console.log('🔍 Found stores in sessionStorage:', sessionStores);
+          try {
+            const parsedSessionStores = JSON.parse(sessionStores);
+            if (parsedSessionStores.length > 0) {
+              console.log('🔧 Using stores from sessionStorage');
+              localStorage.setItem('stores', sessionStores);
+              window.location.reload();
+              return;
+            }
+          } catch (e) {
+            console.error('Error parsing sessionStorage stores:', e);
+          }
+        }
+
+        // Try to communicate with parent window (if opened from dashboard)
+        if (window.opener && !window.opener.closed) {
+          console.log('🔍 Trying to get data from parent window...');
+          try {
+            window.opener.postMessage({ type: 'REQUEST_STORE_DATA', subdomain }, '*');
+
+            // Listen for response
+            const messageHandler = (event) => {
+              if (event.data.type === 'STORE_DATA_RESPONSE' && event.data.stores) {
+                console.log('✅ Received store data from parent window');
+                localStorage.setItem('stores', JSON.stringify(event.data.stores));
+                window.removeEventListener('message', messageHandler);
+                window.location.reload();
+              }
+            };
+
+            window.addEventListener('message', messageHandler);
+
+            // If no response in 2 seconds, continue with normal flow
+            setTimeout(() => {
+              window.removeEventListener('message', messageHandler);
+            }, 2000);
+          } catch (e) {
+            console.error('Error communicating with parent window:', e);
+          }
+        }
+
         setLoading(false);
         return;
       }
@@ -104,6 +163,8 @@ export default function WorkingStorefront() {
       // Find store by subdomain
       let foundStore = stores.find(s => s.subdomain === subdomain);
       console.log('🔍 Exact subdomain match:', foundStore ? foundStore.name : 'Not found');
+      console.log('🔍 Looking for subdomain:', subdomain);
+      console.log('🔍 Available subdomains:', stores.map(s => s.subdomain));
 
       // If not found by exact subdomain, try alternatives
       if (!foundStore) {
@@ -124,11 +185,33 @@ export default function WorkingStorefront() {
         console.log('🔍 Alternative match result:', foundStore ? foundStore.name : 'Still not found');
       }
 
-      // If still not found, use the first available active store
-      if (!foundStore && stores.length > 0) {
-        console.log('🔍 Using first available store as fallback...');
-        foundStore = stores.find(s => s.status === 'active') || stores[0];
-        console.log('🔍 Fallback store:', foundStore ? foundStore.name : 'None available');
+      // Don't use fallback stores - if the exact store isn't found, show error
+      if (!foundStore) {
+        console.log('🔍 No matching store found for subdomain:', subdomain);
+        console.log('🔍 Available stores:', stores.map(s => ({
+          name: s.name,
+          subdomain: s.subdomain,
+          ownerId: s.ownerId,
+          createdAt: s.createdAt
+        })));
+
+        // Remove old test stores that might interfere
+        const filteredStores = stores.filter(s =>
+          s.subdomain !== 'store-fallback' &&
+          s.name !== 'متجر تجريبي' &&
+          s.ownerId !== 'merchant_fallback'
+        );
+
+        if (filteredStores.length !== stores.length) {
+          console.log('🧹 Cleaning up old test stores...');
+          localStorage.setItem('stores', JSON.stringify(filteredStores));
+
+          // Try to find in cleaned stores
+          foundStore = filteredStores.find(s => s.subdomain === subdomain);
+          if (foundStore) {
+            console.log('✅ Found store after cleanup:', foundStore.name);
+          }
+        }
       }
 
       if (!foundStore) {
@@ -256,10 +339,23 @@ export default function WorkingStorefront() {
             لم يتم العثور على متجر بالرابط: <strong>{subdomain}</strong>
           </p>
 
+          <div className="bg-blue-50 p-4 rounded-lg mb-4 text-sm">
+            <p className="text-blue-800 mb-2"><strong>معلومات التشخيص:</strong></p>
+            <p>عدد المتاجر المتاحة: {stores.length}</p>
+            <p>الرابط المطلوب: {subdomain}</p>
+            <p>localStorage stores: {localStorage.getItem('stores') ? 'موجود' : 'غير موجود'}</p>
+          </div>
+
           {stores.length === 0 ? (
             <div className="bg-yellow-50 p-4 rounded-lg mb-6">
               <p className="text-yellow-800 mb-4">لا توجد متاجر في النظام حالياً</p>
+              <p className="text-yellow-700 text-sm mb-4">
+                يمكنك إنشاء متجر جديد من خلال لوحة تح��م التاجر
+              </p>
               <div className="flex gap-2 justify-center">
+                <Button onClick={() => navigate('/merchant/dashboard')} className="bg-blue-600 hover:bg-blue-700">
+                  إنشاء متجر جديد
+                </Button>
                 <Button
                   onClick={() => {
                     // Create a test store directly
@@ -385,9 +481,44 @@ export default function WorkingStorefront() {
           <div className="flex gap-3 justify-center">
             <Button
               variant="outline"
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                console.log('🔄 Force reloading store data...');
+
+                // Try to get fresh data from multiple sources
+                const localStores = localStorage.getItem('stores');
+                const sessionStores = sessionStorage.getItem('stores');
+
+                console.log('🔄 Local storage:', localStores);
+                console.log('🔄 Session storage:', sessionStores);
+
+                if (sessionStores && (!localStores || localStores === '[]')) {
+                  console.log('🔄 Using session storage data');
+                  localStorage.setItem('stores', sessionStores);
+                }
+
+                loadStoreData();
+              }}
+            >
+              إعادة تحميل البيانات
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Force sync data before reload
+                const sessionStores = sessionStorage.getItem('stores');
+                if (sessionStores) {
+                  localStorage.setItem('stores', sessionStores);
+                }
+                window.location.reload();
+              }}
             >
               إعادة المحاولة
+            </Button>
+            <Button
+              onClick={() => navigate('/merchant/dashboard')}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              العودة للوحة التحكم
             </Button>
             <Button
               onClick={() => navigate('/customer/stores')}
@@ -447,15 +578,33 @@ export default function WorkingStorefront() {
     </Card>
   );
 
+  // Apply store customizations
+  const storeStyle = store ? {
+    '--store-primary': store.customization.colors.primary,
+    '--store-secondary': store.customization.colors.secondary,
+    '--store-background': store.customization.colors.background,
+    '--store-text': store.customization.colors.text,
+    '--store-accent': store.customization.colors.accent,
+  } as React.CSSProperties : {};
+
   return (
-    <div className="min-h-screen bg-white" dir="rtl">
+    <div
+      className="min-h-screen"
+      dir="rtl"
+      style={{
+        backgroundColor: store?.customization.colors.background || '#ffffff',
+        color: store?.customization.colors.text || '#1e293b',
+        fontFamily: store?.customization.fonts.body || 'Cairo',
+        ...storeStyle
+      }}
+    >
       {/* Header */}
       <header className="bg-white shadow-sm border-b sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4">
           {/* Top Bar */}
           <div className="flex items-center justify-between py-2 text-sm border-b">
             <div className="flex items-center gap-4">
-              <span className="text-gray-600">مرحباً بكم في {store.name}</span>
+              <span className="text-gray-600">مرحباً ��كم في {store.name}</span>
             </div>
             <div className="flex items-center gap-4">
               <span className="text-gray-600">التوصيل المجاني للطلبات أكثر من {store.settings.shipping.freeShippingThreshold} ر.س</span>
@@ -465,17 +614,28 @@ export default function WorkingStorefront() {
           {/* Main Header */}
           <div className="flex items-center justify-between py-4">
             {/* Logo */}
-            <div 
+            <div
               onClick={() => {
                 setCurrentPage('home');
                 setSelectedProduct(null);
               }}
               className="flex items-center gap-3 cursor-pointer"
             >
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                style={{ backgroundColor: store?.customization.colors.primary || '#2563eb' }}
+              >
                 <ShoppingBag className="h-6 w-6 text-white" />
               </div>
-              <span className="text-xl font-bold">{store.name}</span>
+              <span
+                className="text-xl font-bold"
+                style={{
+                  fontFamily: store?.customization.fonts.heading || 'Cairo',
+                  color: store?.customization.colors.text || '#1e293b'
+                }}
+              >
+                {store.name}
+              </span>
             </div>
 
             {/* Search Bar */}
@@ -515,13 +675,17 @@ export default function WorkingStorefront() {
           {/* Navigation */}
           <nav className="pb-4">
             <div className="flex items-center gap-4">
-              <Button 
+              <Button
                 variant={currentPage === 'home' ? 'default' : 'ghost'}
                 onClick={() => {
                   setCurrentPage('home');
                   setSelectedProduct(null);
                 }}
                 size="sm"
+                style={currentPage === 'home' ? {
+                  backgroundColor: store?.customization.colors.primary || '#2563eb',
+                  color: 'white'
+                } : {}}
               >
                 <Home className="h-4 w-4 mr-2" />
                 الرئيسية

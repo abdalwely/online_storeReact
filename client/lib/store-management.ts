@@ -230,6 +230,10 @@ export const createStore = (storeData: Omit<Store, 'id' | 'createdAt' | 'updated
   
   stores.push(store);
   localStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
+
+  // Also save to sessionStorage for cross-tab communication
+  sessionStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
+
   console.log('✅ Store created:', store);
   return store;
 };
@@ -272,6 +276,10 @@ export const updateStore = (storeId: string, updates: Partial<Store>): Store | n
       updatedAt: new Date()
     };
     localStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
+
+    // Also save to sessionStorage for cross-tab communication
+    sessionStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
+
     console.log('✅ Store updated:', stores[index]);
     return stores[index];
   }

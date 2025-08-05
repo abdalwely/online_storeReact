@@ -14,6 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   getStores,
   getStoreByOwnerId,
+  getStoreById,
   getProducts,
   getOrders,
   createStore,
@@ -116,26 +117,116 @@ export default function ComprehensiveMerchantDashboard() {
     }
   }, [userData]);
 
+  // Listen for store data requests from child windows (store pages)
+  useEffect(() => {
+    const messageHandler = (event) => {
+      if (event.data.type === 'REQUEST_STORE_DATA') {
+        console.log('🔗 Child window requesting store data for:', event.data.subdomain);
+        const stores = getStores();
+        const requestedStore = stores.find(s => s.subdomain === event.data.subdomain);
+
+        if (requestedStore) {
+          console.log('✅ Sending store data to child window');
+          event.source.postMessage({
+            type: 'STORE_DATA_RESPONSE',
+            stores: stores,
+            requestedStore: requestedStore
+          }, '*');
+        }
+      }
+    };
+
+    window.addEventListener('message', messageHandler);
+
+    return () => {
+      window.removeEventListener('message', messageHandler);
+    };
+  }, []);
+
   const loadMerchantData = () => {
     try {
       console.log('📊 Loading comprehensive merchant data for user:', userData?.uid);
 
+      // Clean up any duplicate or incorrect stores first
+      const allStores = getStores();
+      console.log('🧹 All stores before cleanup:', allStores.length);
+
+      // Remove old test/fallback stores that might conflict, but keep user's actual stores
+      const cleanedStores = allStores.filter(store => {
+        const isOldTestStore = (store.subdomain === 'store-fallback' ||
+                              store.name === 'متجر تجريبي' ||
+                              store.ownerId === 'merchant_fallback') &&
+                              store.ownerId !== userData?.uid; // Don't remove if it belongs to current user
+
+        if (isOldTestStore) {
+          console.log('🧹 Removing old test store:', store.name, store.subdomain);
+          return false;
+        }
+        return true;
+      });
+
+      if (cleanedStores.length !== allStores.length) {
+        localStorage.setItem('stores', JSON.stringify(cleanedStores));
+        console.log('🧹 Cleaned stores, new count:', cleanedStores.length);
+      }
+
       let merchantStore = getStoreByOwnerId(userData?.uid || '');
 
+      // Debug current state
+      console.log('🔍 Current user ID:', userData?.uid);
+      console.log('🔍 Available stores after cleanup:', cleanedStores.length);
+      cleanedStores.forEach(store => {
+        console.log(`  - ${store.name} (${store.subdomain}) owned by ${store.ownerId}`);
+      });
+
+      // If no store exists for this merchant, create one automatically
+      if (!merchantStore && userData?.uid) {
+        console.log('🔧 No store found for merchant, creating one...');
+        merchantStore = handleCreateStore();
+
+        // Verify the store was created and saved
+        if (merchantStore) {
+          console.log('✅ Store created successfully:', merchantStore.subdomain);
+
+          // Force save to localStorage to ensure it persists
+          const currentStores = getStores();
+          const storeExists = currentStores.find(s => s.id === merchantStore.id);
+          if (!storeExists) {
+            console.log('⚠️ Store not found in localStorage after creation, force saving...');
+            currentStores.push(merchantStore);
+            localStorage.setItem('stores', JSON.stringify(currentStores));
+          }
+        }
+      }
+
       // If store exists but has incorrect subdomain, fix it
-      if (merchantStore && (merchantStore.subdomain === 'store-fallback' || !merchantStore.subdomain.includes('store-'))) {
+      else if (merchantStore && (
+        merchantStore.subdomain === 'store-fallback' ||
+        !merchantStore.subdomain.includes('store-') ||
+        merchantStore.subdomain.includes('fallback') ||
+        merchantStore.ownerId === 'merchant_fallback' ||
+        merchantStore.ownerId !== userData?.uid
+      )) {
         const correctSubdomain = `store-${userData?.uid?.slice(-8) || 'default'}`;
-        console.log('🔧 Fixing store subdomain from', merchantStore.subdomain, 'to', correctSubdomain);
+        console.log('🔧 Fixing store data:', {
+          oldSubdomain: merchantStore.subdomain,
+          newSubdomain: correctSubdomain,
+          oldOwnerId: merchantStore.ownerId,
+          newOwnerId: userData?.uid
+        });
 
         const updatedStore = updateStore(merchantStore.id, {
-          subdomain: correctSubdomain
+          subdomain: correctSubdomain,
+          ownerId: userData?.uid || '',
+          updatedAt: new Date()
         });
 
         if (updatedStore) {
           merchantStore = updatedStore;
+          console.log('✅ Store data fixed successfully:', updatedStore);
           toast({
-            title: 'تم تحديث رابط المتجر',
-            description: `رابط متجرك الآن: ${correctSubdomain}.store.com`
+            title: 'تم إصلاح بيانات المتجر',
+            description: `رابط متجرك الآن: ${correctSubdomain}`
           });
         }
       }
@@ -225,17 +316,33 @@ export default function ComprehensiveMerchantDashboard() {
 
   const handleCreateStore = () => {
     console.log('🚀 Creating new store for merchant:', userData?.uid);
-    
+
     if (!userData) {
       toast({
         title: 'خطأ',
-        description: 'بيانات المس��خدم غير متوفرة',
+        description: 'بيانات المستخدم غير متوفر��',
         variant: 'destructive'
       });
-      return;
+      return null;
     }
 
     try {
+      // Clean up old test stores only, not user's actual stores
+      const storesBeforeCreation = getStores();
+      const cleanedStores = storesBeforeCreation.filter(s => {
+        // Only remove test stores that don't belong to current user
+        const isTestStore = (s.subdomain === 'store-fallback' ||
+                           s.name === 'متجر تجريبي' ||
+                           s.ownerId === 'merchant_fallback') &&
+                           s.ownerId !== userData?.uid;
+        return !isTestStore;
+      });
+
+      if (cleanedStores.length !== storesBeforeCreation.length) {
+        localStorage.setItem('stores', JSON.stringify(cleanedStores));
+        console.log('🧹 Cleaned old test stores before creating new one');
+      }
+
       const newStore = createStore({
         name: `متجر ${userData.firstName || 'التاجر'}`,
         description: 'متجر إلكتروني متميز',
@@ -287,7 +394,7 @@ export default function ComprehensiveMerchantDashboard() {
             zones: [
               { id: '1', name: 'الرياض', cities: ['الرياض'], cost: 15, estimatedDays: '1-2 يوم' },
               { id: '2', name: 'المنطقة الشرقية', cities: ['الدمام', 'الخبر', 'الجبيل'], cost: 25, estimatedDays: '2-3 أيام' },
-              { id: '3', name: 'مكة المكرمة', cities: ['مكة', 'جدة', 'الطائف'], cost: 20, estimatedDays: '2-3 أيام' }
+              { id: '3', name: 'مكة المك��مة', cities: ['مكة', 'جدة', 'الطائف'], cost: 20, estimatedDays: '2-3 أيام' }
             ]
           },
           payment: {
@@ -318,19 +425,38 @@ export default function ComprehensiveMerchantDashboard() {
       console.log('✅ All stores after creation:', getStores());
       console.log('✅ Products after sample data:', getProducts(newStore.id));
 
+      // Double-check localStorage was updated
+      const storedStores = localStorage.getItem('stores');
+      console.log('✅ Raw localStorage stores after creation:', storedStores);
+
+      // Verify specific store exists
+      const verificationStores = getStores();
+      const foundStore = verificationStores.find(s => s.id === newStore.id);
+      console.log('✅ Verification - store found in localStorage:', foundStore ? 'YES' : 'NO');
+
+      if (foundStore) {
+        console.log('✅ Store details in localStorage:', {
+          id: foundStore.id,
+          name: foundStore.name,
+          subdomain: foundStore.subdomain,
+          ownerId: foundStore.ownerId
+        });
+      }
+
       toast({
-        title: 'تم إنشاء المتجر بنجاح! 🎉',
-        description: 'تم إنشاء م��جرك مع منتجات تجريبية يمكنك تعديلها'
+        title: '��م إنشاء المتجر بنجاح! 🎉',
+        description: `تم إنشاء متجرك: ${newStore.subdomain}`
       });
 
-      loadMerchantData();
+      return newStore;
     } catch (error) {
       console.error('Error creating store:', error);
       toast({
         title: 'خطأ في إنشاء المتجر',
-        description: 'حدث خطأ أثناء إنشاء المتجر، يرجى المحاولة مرة أخرى',
+        description: 'حدث خطأ أثناء إن��اء المتجر، يرجى المحاولة مرة أخرى',
         variant: 'destructive'
       });
+      return null;
     }
   };
 
@@ -340,12 +466,12 @@ export default function ComprehensiveMerchantDashboard() {
       loadMerchantData();
       toast({
         title: 'تم تحديث حالة الطلب',
-        description: `تم تغيير حالة الطلب إلى ${getStatusLabel(newStatus)}`
+        description: `تم تغيير حالة الطلب ��لى ${getStatusLabel(newStatus)}`
       });
     } catch (error) {
       toast({
         title: 'خطأ في تحديث الطلب',
-        description: 'حدث خطأ أثناء ����حديث حالة الطلب',
+        description: 'حدث خطأ أثناء �����ح��يث حالة الطلب',
         variant: 'destructive'
       });
     }
@@ -362,7 +488,7 @@ export default function ComprehensiveMerchantDashboard() {
     } catch (error) {
       toast({
         title: 'خطأ في تحديث المنتج',
-        description: 'حدث خطأ أثناء تحديث المنتج',
+        description: 'حدث خطأ أثن��ء تحديث المنتج',
         variant: 'destructive'
       });
     }
@@ -372,15 +498,15 @@ export default function ComprehensiveMerchantDashboard() {
     // Mock implementation
     toast({
       title: 'تم إرسال الرسالة',
-      description: 'تم إرسال الرسالة الترويجية بنجاح'
+      description: 'تم إرسال الرسالة الترويجية بن��اح'
     });
   };
 
   const getStatusBadge = (status: string) => {
     const statusMap = {
-      'pending': { label: 'في الانتظار', variant: 'outline' as const },
-      'confirmed': { label: 'مؤكد', variant: 'default' as const },
-      'processing': { label: 'قيد المعالجة', variant: 'secondary' as const },
+      'pending': { label: '��ي الانتظار', variant: 'outline' as const },
+      'confirmed': { label: '������د', variant: 'default' as const },
+      'processing': { label: 'قيد ��لمعالجة', variant: 'secondary' as const },
       'shipped': { label: 'تم الشحن', variant: 'default' as const },
       'delivered': { label: 'تم التوصيل', variant: 'default' as const },
       'cancelled': { label: 'ملغي', variant: 'destructive' as const },
@@ -397,7 +523,7 @@ export default function ComprehensiveMerchantDashboard() {
     const statusMap = {
       'pending': 'في الانتظار',
       'confirmed': 'مؤكد',
-      'processing': 'قيد المعالجة',
+      'processing': 'قيد المعا��جة',
       'shipped': 'تم الشحن',
       'delivered': 'تم التوصيل',
       'cancelled': 'ملغي'
@@ -491,10 +617,63 @@ export default function ComprehensiveMerchantDashboard() {
                   <div className="flex-1 bg-white rounded-lg overflow-hidden">
                     <div className="p-4 bg-gray-50 border-b text-sm space-y-2">
                       <div><strong>معلومات التشخيص:</strong></div>
-                      <div>رابط المتجر المحلي: /store/{store.subdomain}</div>
+                      <div>رابط المتجر الم��لي: /store/{store.subdomain}</div>
                       <div>رابط المتجر الكامل: {window.location.origin}/store/{store.subdomain}</div>
                       <div>معرف المتجر: {store.id}</div>
                       <div>اسم المتجر: {store.name}</div>
+                      <div>معرف المالك: {store.ownerId}</div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          حالة ا��رابط:
+                          <span className={`ml-2 px-2 py-1 rounded text-xs ${
+                          store.subdomain === 'store-fallback' || store.subdomain.includes('fallback') || store.ownerId === 'merchant_fallback' || store.ownerId !== userData?.uid
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-green-100 text-green-800'
+                        }`}>
+                            {store.subdomain === 'store-fallback' || store.subdomain.includes('fallback') || store.ownerId === 'merchant_fallback' || store.ownerId !== userData?.uid
+                              ? 'يحتاج إصلاح'
+                              : 'صحيح'}
+                          </span>
+                        </div>
+                        {(store.subdomain === 'store-fallback' || store.subdomain.includes('fallback') || store.ownerId === 'merchant_fallback' || store.ownerId !== userData?.uid) && (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              const correctSubdomain = `store-${userData?.uid?.slice(-8) || 'default'}`;
+                              console.log('🔧 Preview fix: updating store', store.id);
+
+                              const updatedStore = updateStore(store.id, {
+                                subdomain: correctSubdomain,
+                                ownerId: userData?.uid || '',
+                                updatedAt: new Date()
+                              });
+
+                              if (updatedStore) {
+                                console.log('✅ Store updated in preview:', updatedStore);
+                                setStore(updatedStore);
+                                toast({
+                                  title: 'تم إصلاح الرابط',
+                                  description: `رابط متجرك الآن: ${updatedStore.subdomain}`
+                                });
+                                setTimeout(() => {
+                                  setStorePreviewOpen(false);
+                                  loadMerchantData();
+                                }, 1000);
+                              } else {
+                                console.error('❌ Failed to update store in preview');
+                                toast({
+                                  title: 'خطأ في الإصلاح',
+                                  description: 'فشل في تحديث المتجر',
+                                  variant: 'destructive'
+                                });
+                              }
+                            }}
+                            className="bg-blue-600 hover:bg-blue-700 text-white"
+                          >
+                            إصلاح الآن
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     <iframe
                       src={`/store/${store.subdomain}?debug=true`}
@@ -564,7 +743,7 @@ export default function ComprehensiveMerchantDashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">العملاء النشطون</p>
+                  <p className="text-sm font-medium text-gray-600">العملاء الن��طون</p>
                   <p className="text-2xl font-bold text-gray-900">{stats.activeCustomers}</p>
                   <p className="text-xs text-indigo-600">+5 عميل جديد اليوم</p>
                 </div>
@@ -596,10 +775,10 @@ export default function ComprehensiveMerchantDashboard() {
           <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="overview">نظرة عامة</TabsTrigger>
             <TabsTrigger value="products">إدارة المنتجات</TabsTrigger>
-            <TabsTrigger value="orders">إدارة الطلبات</TabsTrigger>
+            <TabsTrigger value="orders">إدارة ��لطلبات</TabsTrigger>
             <TabsTrigger value="customers">إدارة العملاء</TabsTrigger>
             <TabsTrigger value="payments">إعدادات الدفع</TabsTrigger>
-            <TabsTrigger value="analytics">التقارير والإحصائيات</TabsTrigger>
+            <TabsTrigger value="analytics">التقا��ير والإحصائيات</TabsTrigger>
             <TabsTrigger value="store">إدارة المتجر</TabsTrigger>
           </TabsList>
 
@@ -624,22 +803,55 @@ export default function ComprehensiveMerchantDashboard() {
                       <div className="flex-1">
                         <p className="text-sm text-gray-500">رابط المتجر</p>
                         <p className="font-medium">{store.subdomain}.store.com</p>
-                        {(store.subdomain === 'store-fallback' || !store.subdomain.includes('store-')) && (
+                        {(store.subdomain === 'store-fallback' || !store.subdomain.includes('store-') || store.subdomain.includes('fallback') || store.ownerId === 'merchant_fallback' || store.ownerId !== userData?.uid) && (
                           <Button
                             size="sm"
                             variant="outline"
-                            className="mt-2 text-xs"
+                            className="mt-2 text-xs bg-yellow-50 border-yellow-200 text-yellow-800"
                             onClick={() => {
                               const correctSubdomain = `store-${userData?.uid?.slice(-8) || 'default'}`;
-                              const updatedStore = updateStore(store.id, {
-                                subdomain: correctSubdomain
+                              console.log('🔧 Manual fix: changing store data');
+                              console.log('🔧 Old data:', {
+                                subdomain: store.subdomain,
+                                ownerId: store.ownerId,
+                                id: store.id
+                              });
+                              console.log('🔧 New data:', {
+                                subdomain: correctSubdomain,
+                                ownerId: userData?.uid
                               });
 
+                              const updatedStore = updateStore(store.id, {
+                                subdomain: correctSubdomain,
+                                ownerId: userData?.uid || '',
+                                updatedAt: new Date()
+                              });
+
+                              console.log('🔧 Update result:', updatedStore);
+
                               if (updatedStore) {
+                                console.log('✅ Store updated successfully, setting state...');
                                 setStore(updatedStore);
+
+                                // Verify the update
+                                const verifyStore = getStoreById(store.id);
+                                console.log('🔍 Verification check:', verifyStore);
+
                                 toast({
-                                  title: 'تم إصلاح رابط المتجر',
-                                  description: `رابط متجرك الآن: ${correctSubdomain}.store.com`
+                                  title: 'تم إصلاح بيانات المتجر',
+                                  description: `رابط متجرك الآن: ${updatedStore.subdomain}`
+                                });
+
+                                // Reload data to ensure consistency
+                                setTimeout(() => {
+                                  loadMerchantData();
+                                }, 1000);
+                              } else {
+                                console.error('❌ Failed to update store');
+                                toast({
+                                  title: 'خطأ في الإصلاح',
+                                  description: 'فشل في تحديث بيانات المتجر',
+                                  variant: 'destructive'
                                 });
                               }
                             }}
@@ -647,6 +859,138 @@ export default function ComprehensiveMerchantDashboard() {
                             إصلاح رابط المتجر
                           </Button>
                         )}
+
+                        {/* إعادة إنشاء المتجر كحل أخير */}
+                        {(store.subdomain === 'store-fallback' || !store.subdomain.includes('store-') || store.subdomain.includes('fallback') || store.ownerId === 'merchant_fallback' || store.ownerId !== userData?.uid) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="mt-2 text-xs bg-red-50 border-red-200 text-red-800"
+                            onClick={() => {
+                              if (confirm('هل أنت متأكد من إعادة إنشاء المتجر؟ سيتم حذف البيانات الحالية.')) {
+                                console.log('🔄 Recreating store for user:', userData?.uid);
+
+                                // Delete current store data
+                                const existingStores = getStores();
+                                const filteredStores = existingStores.filter(s => s.id !== store.id);
+                                localStorage.setItem('stores', JSON.stringify(filteredStores));
+
+                                // Create new store
+                                const newStore = handleCreateStore();
+                                if (newStore) {
+                                  setStore(newStore);
+                                  toast({
+                                    title: 'تم إعادة إنشاء المتجر بنجاح',
+                                    description: `رابط متجرك الجديد: ${newStore.subdomain}`
+                                  });
+
+                                  setTimeout(() => {
+                                    loadMerchantData();
+                                  }, 1000);
+                                }
+                              }
+                            }}
+                          >
+                            إعادة إنشاء المتجر
+                          </Button>
+                        )}
+
+                        {/* زر إعادة التعيين الشاملة */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 text-xs bg-purple-50 border-purple-200 text-purple-800"
+                          onClick={() => {
+                            if (confirm('هل أنت متأ��د من إعادة تعيين جميع البيانات؟ سيتم تسجيل الخروج وإعادة إنشا�� حساب جديد.')) {
+                              console.log('🧹 Resetting all data...');
+
+                              // Clear all localStorage data
+                              localStorage.clear();
+
+                              toast({
+                                title: 'تم مسح البيانات',
+                                description: 'سيتم إعادة تحميل الصفحة وإنشاء حساب جديد'
+                              });
+
+                              // Reload page to restart with fresh data
+                              setTimeout(() => {
+                                window.location.reload();
+                              }, 1500);
+                            }
+                          }}
+                        >
+                          إعادة تعيين شاملة
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 text-xs bg-orange-50 border-orange-200 text-orange-800"
+                          onClick={() => {
+                            console.log('🧹 Cleaning old stores...');
+
+                            const currentStores = getStores();
+                            const before = currentStores.length;
+
+                            const cleanedStores = currentStores.filter(s => {
+                              const isTestStore = (s.subdomain === 'store-fallback' ||
+                                                 s.name === 'متجر تجريبي' ||
+                                                 s.ownerId === 'merchant_fallback') &&
+                                                 s.ownerId !== userData?.uid;
+                              return !isTestStore;
+                            });
+
+                            localStorage.setItem('stores', JSON.stringify(cleanedStores));
+
+                            toast({
+                              title: 'تم تنظيف المتاجر القديمة',
+                              description: `تم حذف ${before - cleanedStores.length} متجر قديم`
+                            });
+
+                            setTimeout(() => {
+                              loadMerchantData();
+                            }, 1000);
+                          }}
+                        >
+                          تنظيف المتاجر القديمة
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 text-xs bg-blue-50 border-blue-200 text-blue-800"
+                          onClick={() => {
+                            console.log('🔍 localStorage Diagnostic...');
+                            console.log('🔍 Raw stores:', localStorage.getItem('stores'));
+                            console.log('🔍 Parsed stores:', getStores());
+                            console.log('🔍 Current user:', userData?.uid);
+                            console.log('🔍 Current store in state:', store);
+
+                            // Force save current store if it exists in state but not in localStorage
+                            if (store && userData?.uid) {
+                              const currentStores = getStores();
+                              const storeExists = currentStores.find(s => s.id === store.id);
+
+                              if (!storeExists) {
+                                console.log('🔧 Force saving store to localStorage...');
+                                currentStores.push(store);
+                                localStorage.setItem('stores', JSON.stringify(currentStores));
+
+                                toast({
+                                  title: 'تم حفظ المتجر',
+                                  description: 'تم إصلاح مشكلة حفظ المتجر في المتصفح'
+                                });
+                              } else {
+                                toast({
+                                  title: 'المتجر محفوظ بالفعل',
+                                  description: 'لا توجد مشكلة في البيانات'
+                                });
+                              }
+                            }
+                          }}
+                        >
+                          فحص localStorage
+                        </Button>
                       </div>
                       {getStatusBadge(store.status)}
                     </div>
@@ -736,7 +1080,7 @@ export default function ComprehensiveMerchantDashboard() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <TrendingUp className="h-5 w-5" />
-                    المنتجات الأعلى مبيعاً
+                    ال��نتجات الأعل���� مبيعاً
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -769,7 +1113,7 @@ export default function ComprehensiveMerchantDashboard() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <AlertCircle className="h-5 w-5 text-orange-500" />
-                    تنبيهات مهمة
+                    ت��بيهات مهم��
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -778,7 +1122,7 @@ export default function ComprehensiveMerchantDashboard() {
                       <div className="flex items-center gap-3 p-3 bg-orange-50 rounded-lg">
                         <Package className="h-5 w-5 text-orange-500" />
                         <div>
-                          <p className="font-medium">منتجات قاربت على النفاد</p>
+                          <p className="font-medium">منتجات قا��بت على النفاد</p>
                           <p className="text-sm text-gray-600">{stats.lowStockProducts} منتج بحاجة لإعادة تخزين</p>
                         </div>
                       </div>
@@ -801,7 +1145,7 @@ export default function ComprehensiveMerchantDashboard() {
           {/* Products Management Tab */}
           <TabsContent value="products" className="space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold">إدارة المنتجات</h2>
+              <h2 className="text-2xl font-bold">إد��رة المنتجات</h2>
               <div className="flex gap-3">
                 <div className="relative">
                   <Search className="h-4 w-4 absolute left-3 top-3 text-gray-400" />
@@ -817,7 +1161,7 @@ export default function ComprehensiveMerchantDashboard() {
                   className="bg-blue-600 hover:bg-blue-700"
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  إضافة منتج جديد
+                  إضافة ��نتج جديد
                 </Button>
               </div>
             </div>
@@ -925,7 +1269,7 @@ export default function ComprehensiveMerchantDashboard() {
                         onClick={() => navigate('/merchant/products/new')}
                         className="mt-4"
                       >
-                        إضافة منتج جديد
+                        إضاف�� منتج جديد
                       </Button>
                     </div>
                   )}
@@ -1131,14 +1475,14 @@ export default function ComprehensiveMerchantDashboard() {
                             <div className="space-y-4">
                               <div>
                                 <Label>الرسالة</Label>
-                                <Textarea placeholder="اكتب رسالتك الترويجية هنا..." />
+                                <Textarea placeholder="اكتب رسالتك الت��ويجية هنا..." />
                               </div>
                               <Button 
                                 onClick={() => handleSendPromotionalMessage(customer.id, 'رسالة ترويجية')}
                                 className="w-full"
                               >
                                 <Mail className="h-4 w-4 mr-2" />
-                                إرسال الرسالة
+                                إر��ال الرسالة
                               </Button>
                             </div>
                           </DialogContent>
@@ -1181,15 +1525,15 @@ export default function ComprehensiveMerchantDashboard() {
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label>الدفع عند الاستلام</Label>
-                      <p className="text-sm text-gray-600">تفعيل الدفع النقدي عند الاستلام</p>
+                      <Label>الدفع عند الاستل��م</Label>
+                      <p className="text-sm text-gray-600">تفعيل الدفع النقدي عند ال��ستلام</p>
                     </div>
                     <input type="checkbox" defaultChecked className="h-4 w-4" />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label>التحويل البنكي</Label>
-                      <p className="text-sm text-gray-600">استقبال المدفوعات عبر التحويل البنكي</p>
+                      <Label>التحويل البنك��</Label>
+                      <p className="text-sm text-gray-600">استقبال المدفوعات عبر التح��يل البنكي</p>
                     </div>
                     <input type="checkbox" defaultChecked className="h-4 w-4" />
                   </div>
@@ -1219,9 +1563,9 @@ export default function ComprehensiveMerchantDashboard() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <Label>رقم الحساب البنكي</Label>
+                    <Label>رقم الحساب الب��كي</Label>
                     <Input 
-                      placeholder="أدخل رقم الحساب البنكي"
+                      placeholder="��دخل رقم الحساب البنكي"
                       value={paymentSettings.bankAccount}
                       onChange={(e) => setPaymentSettings({...paymentSettings, bankAccount: e.target.value})}
                     />
@@ -1251,7 +1595,7 @@ export default function ComprehensiveMerchantDashboard() {
           {/* Analytics and Reports Tab */}
           <TabsContent value="analytics" className="space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold">التقارير والإحصائيات</h2>
+              <h2 className="text-2xl font-bold">التقارير والإ��صائيات</h2>
               <div className="flex gap-3">
                 <Button variant="outline">
                   <Calendar className="h-4 w-4 mr-2" />
@@ -1259,7 +1603,7 @@ export default function ComprehensiveMerchantDashboard() {
                 </Button>
                 <Button variant="outline">
                   <Download className="h-4 w-4 mr-2" />
-                  تصدير التقرير
+                  تصدير ا��تقرير
                 </Button>
               </div>
             </div>
@@ -1295,7 +1639,7 @@ export default function ComprehensiveMerchantDashboard() {
                 <CardContent>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm">الطلبات المكتملة</span>
+                      <span className="text-sm">الطلبا�� المكتملة</span>
                       <span className="font-bold text-green-600">
                         {orders.filter(o => o.status === 'delivered').length}
                       </span>
@@ -1307,7 +1651,7 @@ export default function ComprehensiveMerchantDashboard() {
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-sm">الطلبات الملغية</span>
+                      <span className="text-sm">��لطلبات الملغية</span>
                       <span className="font-bold text-red-600">
                         {orders.filter(o => o.status === 'cancelled').length}
                       </span>
@@ -1391,7 +1735,7 @@ export default function ComprehensiveMerchantDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="text-center">
                     <p className="text-2xl font-bold text-blue-600">{stats.visitorsCount}</p>
-                    <p className="text-sm text-gray-600">زائر هذا الشهر</p>
+                    <p className="text-sm text-gray-600">زائ�� هذا الشهر</p>
                   </div>
                   <div className="text-center">
                     <p className="text-2xl font-bold text-green-600">{stats.activeCustomers}</p>
@@ -1471,7 +1815,7 @@ export default function ComprehensiveMerchantDashboard() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <Label>اسم المتجر</Label>
+                    <Label>اسم ال��تجر</Label>
                     <Input defaultValue={store.name} />
                   </div>
                   <div>
@@ -1479,7 +1823,7 @@ export default function ComprehensiveMerchantDashboard() {
                     <Textarea defaultValue={store.description} />
                   </div>
                   <div>
-                    <Label>رابط المتجر</Label>
+                    <Label>ر��بط المتجر</Label>
                     <Input defaultValue={`${store.subdomain}.store.com`} disabled />
                   </div>
                 </CardContent>
@@ -1554,13 +1898,31 @@ export default function ComprehensiveMerchantDashboard() {
                     <Palette className="h-5 w-5 mr-2" />
                     تخصيص المتجر
                   </Button>
-                  <Button 
+                  <Button
                     onClick={() => setStorePreviewOpen(true)}
-                    variant="outline" 
+                    variant="outline"
                     className="w-full justify-start h-12"
                   >
                     <Eye className="h-5 w-5 mr-2" />
                     معاينة المتجر
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      // Ensure data is available in both storages before opening
+                      const stores = getStores();
+                      localStorage.setItem('stores', JSON.stringify(stores));
+                      sessionStorage.setItem('stores', JSON.stringify(stores));
+
+                      console.log('🚀 Opening store with guaranteed data:', store.subdomain);
+                      console.log('🚀 Available stores count:', stores.length);
+
+                      window.open(`/store/${store.subdomain}`, '_blank');
+                    }}
+                    variant="outline"
+                    className="w-full justify-start h-12"
+                  >
+                    <Globe className="h-5 w-5 mr-2" />
+                    فتح المتجر مع البيانات
                   </Button>
                 </div>
               </CardContent>

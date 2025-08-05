@@ -85,8 +85,22 @@ export const fallbackSignIn = async (email: string, password: string): Promise<F
         }
         
         if (user) {
+          // Generate unique ID for merchants to avoid conflicts
+          let uniqueUid = user.uid;
+          if (user.userType === 'merchant') {
+            // Create or retrieve unique merchant ID
+            const existingMerchant = localStorage.getItem('merchant_unique_id');
+            if (existingMerchant) {
+              uniqueUid = existingMerchant;
+            } else {
+              uniqueUid = `merchant_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              localStorage.setItem('merchant_unique_id', uniqueUid);
+            }
+            console.log('🏪 Generated unique merchant ID:', uniqueUid);
+          }
+
           currentUser = {
-            uid: user.uid,
+            uid: uniqueUid,
             email: user.email,
             displayName: user.displayName
           };
