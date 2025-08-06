@@ -9,10 +9,13 @@ import {
   getStores,
   getProducts,
   getCategories,
+  syncStoresData,
+  setupStorageListener,
   Store,
   Product,
   Category
 } from '@/lib/store-management';
+import { storeSyncManager, waitForStoreData } from '@/lib/store-sync';
 
 // Test function to check localStorage
 const testLocalStorageData = () => {
@@ -65,19 +68,67 @@ export default function WorkingStorefront() {
   const [searchQuery, setSearchQuery] = useState('');
   
   useEffect(() => {
+    // Setup storage listener for cross-window sync
+    setupStorageListener();
+
+    // Listen for store data updates using StoreSyncManager
+    const handleStoresUpdated = (stores: Store[]) => {
+      console.log('🔄 Stores updated via StoreSyncManager:', stores.length, 'stores');
+      loadStoreData();
+    };
+
+    const handleProductsUpdated = (updatedProducts: Product[]) => {
+      console.log('🔄 Products updated via StoreSyncManager:', updatedProducts.length, 'products');
+      if (store) {
+        const storeProducts = updatedProducts.filter(p => p.storeId === store.id);
+        setProducts(storeProducts);
+        console.log('✅ Updated store products:', storeProducts.length);
+      }
+    };
+
+    const handleCategoriesUpdated = (updatedCategories: Category[]) => {
+      console.log('🔄 Categories updated via StoreSyncManager:', updatedCategories.length, 'categories');
+      if (store) {
+        const storeCategories = updatedCategories.filter(c => c.storeId === store.id);
+        setCategories(storeCategories);
+        console.log('✅ Updated store categories:', storeCategories.length);
+      }
+    };
+
+    storeSyncManager.addEventListener('stores-updated', handleStoresUpdated);
+    storeSyncManager.addEventListener('products-updated', handleProductsUpdated);
+    storeSyncManager.addEventListener('categories-updated', handleCategoriesUpdated);
+
+    // Load initial data with enhanced sync
     loadStoreData();
+
+    // Cleanup
+    return () => {
+      storeSyncManager.removeEventListener('stores-updated', handleStoresUpdated);
+      storeSyncManager.removeEventListener('products-updated', handleProductsUpdated);
+      storeSyncManager.removeEventListener('categories-updated', handleCategoriesUpdated);
+    };
   }, [subdomain]);
 
-  const loadStoreData = () => {
+  const loadStoreData = async () => {
     try {
-      // Check for debug mode
+      // Check for debug mode and URL parameters
       const urlParams = new URLSearchParams(window.location.search);
       const isDebugMode = urlParams.get('debug') === 'true';
+      const isPreviewMode = urlParams.get('preview') === 'true';
 
-      if (isDebugMode) {
-        console.log('🐛 DEBUG MODE: WorkingStorefront');
+      if (isDebugMode || isPreviewMode) {
+        console.log('🐛 SPECIAL MODE: WorkingStorefront');
+        console.log('🐛 Debug mode:', isDebugMode);
+        console.log('🐛 Preview mode:', isPreviewMode);
         console.log('🐛 URL Params:', Object.fromEntries(urlParams));
         console.log('🐛 Window location:', window.location.href);
+
+        // In preview mode, wait a bit for data sync
+        if (isPreviewMode) {
+          console.log('⏱️ Preview mode: waiting for data sync...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
 
       console.log('📊 Loading store data for subdomain:', subdomain);
@@ -85,9 +136,16 @@ export default function WorkingStorefront() {
       // Test localStorage data
       testLocalStorageData();
 
-      // Get all stores
-      const stores = getStores();
+      // Get all stores with enhanced sync using StoreSyncManager
+      let stores = storeSyncManager.getStoresWithFallback();
       console.log('🔍 Total available stores:', stores.length);
+
+      // If no stores found, wait for them to load
+      if (stores.length === 0) {
+        console.log('⏱️ No stores found, waiting for data...');
+        stores = await waitForStoreData(subdomain, 5000);
+        console.log('⏱️ After waiting, found stores:', stores.length);
+      }
       console.log('🔍 Available stores:', stores.map(s => ({
         id: s.id,
         name: s.name,
@@ -121,7 +179,19 @@ export default function WorkingStorefront() {
             if (parsedSessionStores.length > 0) {
               console.log('🔧 Using stores from sessionStorage');
               localStorage.setItem('stores', sessionStores);
-              window.location.reload();
+
+              // Limit reload attempts to prevent ERR_CONNECTION_RESET
+              const reloadAttempts = parseInt(sessionStorage.getItem('reloadAttempts') || '0');
+              if (reloadAttempts < 2) {
+                sessionStorage.setItem('reloadAttempts', String(reloadAttempts + 1));
+                console.log(`🔄 Reloading (attempt ${reloadAttempts + 1}/2)...`);
+                setTimeout(() => window.location.reload(), 500);
+              } else {
+                console.log('🔄 Max reload attempts reached, continuing without reload');
+                sessionStorage.removeItem('reloadAttempts');
+                // Try to reload data manually instead of page reload
+                setTimeout(() => loadStoreData(), 1000);
+              }
               return;
             }
           } catch (e) {
@@ -130,30 +200,41 @@ export default function WorkingStorefront() {
         }
 
         // Try to communicate with parent window (if opened from dashboard)
-        if (window.opener && !window.opener.closed) {
-          console.log('🔍 Trying to get data from parent window...');
-          try {
-            window.opener.postMessage({ type: 'REQUEST_STORE_DATA', subdomain }, '*');
+        const dataRequestAttempts = parseInt(sessionStorage.getItem('dataRequestAttempts') || '0');
+        if (dataRequestAttempts < 3) {
+          sessionStorage.setItem('dataRequestAttempts', String(dataRequestAttempts + 1));
 
-            // Listen for response
-            const messageHandler = (event) => {
-              if (event.data.type === 'STORE_DATA_RESPONSE' && event.data.stores) {
-                console.log('✅ Received store data from parent window');
-                localStorage.setItem('stores', JSON.stringify(event.data.stores));
-                window.removeEventListener('message', messageHandler);
-                window.location.reload();
-              }
-            };
+          if (window.opener && !window.opener.closed) {
+            console.log(`🔍 Trying to get data from parent window (attempt ${dataRequestAttempts + 1}/3)...`);
+            try {
+              window.opener.postMessage({
+                type: 'REQUEST_STORE_DATA',
+                subdomain: subdomain,
+                timestamp: Date.now()
+              }, '*');
 
-            window.addEventListener('message', messageHandler);
-
-            // If no response in 2 seconds, continue with normal flow
-            setTimeout(() => {
-              window.removeEventListener('message', messageHandler);
-            }, 2000);
-          } catch (e) {
-            console.error('Error communicating with parent window:', e);
+              console.log('📤 Sent data request to parent window for subdomain:', subdomain);
+            } catch (e) {
+              console.error('Error communicating with parent window:', e);
+            }
           }
+
+          // Also try to request data from the current window if it's in an iframe
+          if (window.parent !== window) {
+            console.log('🔍 Requesting data from parent iframe...');
+            try {
+              window.parent.postMessage({
+                type: 'REQUEST_STORE_DATA',
+                subdomain: subdomain,
+                timestamp: Date.now()
+              }, '*');
+            } catch (e) {
+              console.error('Error communicating with parent iframe:', e);
+            }
+          }
+        } else {
+          console.log('🔄 Max data request attempts reached');
+          sessionStorage.removeItem('dataRequestAttempts');
         }
 
         setLoading(false);
@@ -232,6 +313,19 @@ export default function WorkingStorefront() {
       setStore(foundStore);
 
       // Load products and categories
+      const allProducts = getProducts(); // Get all products first
+      const allCategories = getCategories(); // Get all categories first
+
+      console.log('🔍 Debug products loading:', {
+        storeId: foundStore.id,
+        allProductsCount: allProducts.length,
+        allCategoriesCount: allCategories.length,
+        rawProductsData: localStorage.getItem('products'),
+        rawCategoriesData: localStorage.getItem('categories'),
+        allProducts: allProducts.map(p => ({ id: p.id, name: p.name, storeId: p.storeId })),
+        allCategories: allCategories.map(c => ({ id: c.id, name: c.name, storeId: c.storeId }))
+      });
+
       const storeProducts = getProducts(foundStore.id);
       const storeCategories = getCategories(foundStore.id);
 
@@ -241,8 +335,14 @@ export default function WorkingStorefront() {
       console.log('✅ Store data loaded successfully:', {
         store: foundStore.name,
         products: storeProducts.length,
-        categories: storeCategories.length
+        categories: storeCategories.length,
+        storeProducts: storeProducts.map(p => ({ name: p.name, storeId: p.storeId }))
       });
+
+      // Clear any reload attempts since we loaded successfully
+      sessionStorage.removeItem('reloadAttempts');
+      sessionStorage.removeItem('pageReloadAttempts');
+      sessionStorage.removeItem('dataRequestAttempts');
 
     } catch (error) {
       console.error('❌ Error loading store data:', error);
@@ -336,7 +436,7 @@ export default function WorkingStorefront() {
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-4">المتجر غير متوفر</h1>
           <p className="text-gray-600 mb-4">
-            لم يتم العثور على متجر بالرابط: <strong>{subdomain}</strong>
+            لم يتم العثور على متجر بالرا��ط: <strong>{subdomain}</strong>
           </p>
 
           <div className="bg-blue-50 p-4 rounded-lg mb-4 text-sm">
@@ -344,11 +444,27 @@ export default function WorkingStorefront() {
             <p>عدد المتاجر المتاحة: {stores.length}</p>
             <p>الرابط المطلوب: {subdomain}</p>
             <p>localStorage stores: {localStorage.getItem('stores') ? 'موجود' : 'غير موجود'}</p>
+            <p>sessionStorage stores: {sessionStorage.getItem('stores') ? 'موجود' : 'غير موجود'}</p>
+            <p>نافذة الأب: {window.opener ? 'متاحة' : 'غير متاحة'}</p>
+            <p>iframe: {window.parent !== window ? 'نعم' : 'لا'}</p>
+            <p>الوقت الحالي: {new Date().toLocaleString('ar-SA')}</p>
+            {stores.length > 0 && (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-blue-700">المتاجر المتاحة:</summary>
+                <ul className="mt-1 list-disc list-inside text-xs">
+                  {stores.map(s => (
+                    <li key={s.id}>
+                      {s.name} - {s.subdomain} (المالك: {s.ownerId})
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </div>
 
           {stores.length === 0 ? (
             <div className="bg-yellow-50 p-4 rounded-lg mb-6">
-              <p className="text-yellow-800 mb-4">لا توجد متاجر في النظام حالياً</p>
+              <p className="text-yellow-800 mb-4">لا توجد متاجر في ا��نظام حالياً</p>
               <p className="text-yellow-700 text-sm mb-4">
                 يمكنك إنشاء متجر جديد من خلال لوحة تح��م التاجر
               </p>
@@ -461,7 +577,7 @@ export default function WorkingStorefront() {
             </div>
           ) : (
             <div className="bg-blue-50 p-4 rounded-lg mb-6">
-              <p className="text-blue-800 mb-4">المتاجر المتاحة:</p>
+              <p className="text-blue-800 mb-4">ا��متاجر المتاحة:</p>
               <div className="grid gap-2">
                 {stores.slice(0, 5).map(store => (
                   <div key={store.id} className="text-sm">
@@ -478,7 +594,7 @@ export default function WorkingStorefront() {
             </div>
           )}
 
-          <div className="flex gap-3 justify-center">
+          <div className="flex gap-3 justify-center flex-wrap">
             <Button
               variant="outline"
               onClick={() => {
@@ -501,6 +617,34 @@ export default function WorkingStorefront() {
             >
               إعادة تحميل البيانات
             </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                console.log('🔧 Initializing sample data for existing store...');
+                const currentStores = getStores();
+                const targetStore = currentStores.find(s => s.subdomain === subdomain);
+
+                if (targetStore) {
+                  import('@/lib/store-management').then(({ initializeSampleData }) => {
+                    initializeSampleData(targetStore.id);
+                    console.log('✅ Sample data initialized for store:', targetStore.name);
+                    toast({
+                      title: 'تم إضافة المنتجات النموذجية',
+                      description: 'تم إضافة منتجات وفئات نموذجية للمتجر'
+                    });
+                    setTimeout(() => loadStoreData(), 1000);
+                  }).catch(error => {
+                    console.error('Error initializing sample data:', error);
+                  });
+                } else {
+                  console.error('Store not found for sample data initialization');
+                }
+              }}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+            >
+              إضافة منتجات نموذجية
+            </Button>
             <Button
               variant="outline"
               onClick={() => {
@@ -509,7 +653,17 @@ export default function WorkingStorefront() {
                 if (sessionStores) {
                   localStorage.setItem('stores', sessionStores);
                 }
-                window.location.reload();
+
+                // Limit reload attempts
+                const reloadAttempts = parseInt(sessionStorage.getItem('pageReloadAttempts') || '0');
+                if (reloadAttempts < 1) {
+                  sessionStorage.setItem('pageReloadAttempts', String(reloadAttempts + 1));
+                  window.location.reload();
+                } else {
+                  console.log('🔄 Using data reload instead of page reload');
+                  sessionStorage.removeItem('pageReloadAttempts');
+                  loadStoreData();
+                }
               }}
             >
               إعادة المحاولة
@@ -524,7 +678,7 @@ export default function WorkingStorefront() {
               onClick={() => navigate('/customer/stores')}
               className="bg-green-600 hover:bg-green-700"
             >
-              تصفح جميع المتاجر
+              تصفح جم��ع ال��تاجر
             </Button>
           </div>
         </div>
@@ -541,7 +695,7 @@ export default function WorkingStorefront() {
           </div>
           {product.originalPrice && product.originalPrice > product.price && (
             <Badge className="absolute top-2 left-2 bg-red-500">
-              خصم {Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}%
+              خ��م {Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}%
             </Badge>
           )}
         </div>
@@ -569,6 +723,11 @@ export default function WorkingStorefront() {
                 e.stopPropagation();
                 addToCart(product.id);
               }}
+              style={{
+                backgroundColor: store?.customization.colors.primary || '#2563eb',
+                color: 'white'
+              }}
+              className="hover:opacity-90 transition-opacity"
             >
               <Plus className="h-4 w-4" />
             </Button>
@@ -599,15 +758,34 @@ export default function WorkingStorefront() {
       }}
     >
       {/* Header */}
-      <header className="bg-white shadow-sm border-b sticky top-0 z-50">
+      <header
+        className="shadow-sm border-b sticky top-0 z-50"
+        style={{
+          backgroundColor: store?.customization.colors.background || '#ffffff',
+          borderColor: store?.customization.colors.secondary || '#e5e7eb'
+        }}
+      >
         <div className="max-w-7xl mx-auto px-4">
           {/* Top Bar */}
-          <div className="flex items-center justify-between py-2 text-sm border-b">
+          <div
+            className="flex items-center justify-between py-2 text-sm border-b"
+            style={{ borderColor: store?.customization.colors.secondary || '#e5e7eb' }}
+          >
             <div className="flex items-center gap-4">
-              <span className="text-gray-600">مرحباً ��كم في {store.name}</span>
+              <span
+                className="text-opacity-70"
+                style={{ color: store?.customization.colors.text || '#4b5563' }}
+              >
+                مرحباً بكم في {store.name}
+              </span>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-gray-600">التوصيل المجاني للطلبات أكثر من {store.settings.shipping.freeShippingThreshold} ر.س</span>
+              <span
+                className="text-opacity-70"
+                style={{ color: store?.customization.colors.text || '#4b5563' }}
+              >
+                التوصيل المجاني للطلبات أكثر من {store.settings.shipping.freeShippingThreshold} ر.س
+              </span>
             </div>
           </div>
 
@@ -642,7 +820,7 @@ export default function WorkingStorefront() {
             <div className="flex-1 max-w-md mx-8">
               <div className="relative">
                 <Input
-                  placeholder="ابحث عن المنتجات..."
+                  placeholder="ابحث عن الم��تجات..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
@@ -661,7 +839,10 @@ export default function WorkingStorefront() {
               >
                 <ShoppingCart className="h-5 w-5" />
                 {cart.length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                  <span
+                    className="absolute -top-1 -right-1 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                    style={{ backgroundColor: store?.customization.colors.primary || '#2563eb' }}
+                  >
                     {getCartItemsCount()}
                   </span>
                 )}
@@ -690,13 +871,17 @@ export default function WorkingStorefront() {
                 <Home className="h-4 w-4 mr-2" />
                 الرئيسية
               </Button>
-              <Button 
+              <Button
                 variant={currentPage === 'products' ? 'default' : 'ghost'}
                 onClick={() => {
                   setCurrentPage('products');
                   setSelectedProduct(null);
                 }}
                 size="sm"
+                style={currentPage === 'products' ? {
+                  backgroundColor: store?.customization.colors.primary || '#2563eb',
+                  color: 'white'
+                } : {}}
               >
                 <Package className="h-4 w-4 mr-2" />
                 ��لمنتجات
@@ -721,15 +906,29 @@ export default function WorkingStorefront() {
         {currentPage === 'home' && !selectedProduct && (
           <div className="space-y-8">
             {/* Hero Section */}
-            <section className="relative h-96 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg overflow-hidden">
+            <section
+              className="relative h-96 rounded-lg overflow-hidden"
+              style={{
+                background: `linear-gradient(to right, ${store?.customization.colors.primary || '#2563eb'}, ${store?.customization.colors.accent || '#7c3aed'})`
+              }}
+            >
               <div className="absolute inset-0 flex items-center justify-center text-white text-center">
                 <div>
-                  <h1 className="text-4xl font-bold mb-4">مرحباً بكم في {store.name}</h1>
+                  <h1
+                    className="text-4xl font-bold mb-4"
+                    style={{ fontFamily: store?.customization.fonts.heading || 'Cairo' }}
+                  >
+                    مرحباً بكم في {store.name}
+                  </h1>
                   <p className="text-xl mb-6">أفضل المنتجات بأسعار مميزة</p>
-                  <Button 
+                  <Button
                     size="lg"
                     onClick={() => setCurrentPage('products')}
-                    className="bg-white text-blue-600 hover:bg-gray-100"
+                    style={{
+                      backgroundColor: store?.customization.colors.background || '#ffffff',
+                      color: store?.customization.colors.primary || '#2563eb'
+                    }}
+                    className="hover:opacity-90 transition-opacity"
                   >
                     تسوق الآن
                   </Button>

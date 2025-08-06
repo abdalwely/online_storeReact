@@ -138,6 +138,15 @@ export default function Navigation({ language, onLanguageChange }: NavigationPro
                   {currentText.startStore}
                 </Button>
               </Link>
+
+              {process.env.NODE_ENV === 'development' && (
+                <Link to="/diagnostics">
+                  <Button variant="outline" size="sm" className="bg-orange-50 border-orange-200 text-orange-600 hover:bg-orange-100">
+                    <Zap className="h-4 w-4 mr-2 rtl:ml-2 rtl:mr-0" />
+                    تشخيص
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
 

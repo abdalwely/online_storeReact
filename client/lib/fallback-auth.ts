@@ -87,27 +87,53 @@ export const fallbackSignIn = async (email: string, password: string): Promise<F
         if (user) {
           // Generate unique ID for merchants to avoid conflicts
           let uniqueUid = user.uid;
+          let actualFirstName = user.displayName || 'مستخدم';
+          let actualLastName = '';
+
           if (user.userType === 'merchant') {
-            // Create or retrieve unique merchant ID
-            const existingMerchant = localStorage.getItem('merchant_unique_id');
+            // Create unique merchant ID per email to avoid sharing data between different merchants
+            const merchantKey = `merchant_unique_id_${email.trim().toLowerCase()}`;
+            const existingMerchant = localStorage.getItem(merchantKey);
             if (existingMerchant) {
               uniqueUid = existingMerchant;
             } else {
               uniqueUid = `merchant_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-              localStorage.setItem('merchant_unique_id', uniqueUid);
+              localStorage.setItem(merchantKey, uniqueUid);
             }
-            console.log('🏪 Generated unique merchant ID:', uniqueUid);
+
+            // البحث عن بيانات التاجر الحقيقية من نظام الموافقة
+            try {
+              const storedApplications = localStorage.getItem('storeApplications');
+              if (storedApplications) {
+                const applications = JSON.parse(storedApplications);
+                const merchantApp = applications.find((app: any) =>
+                  app.merchantData.email.toLowerCase() === email.trim().toLowerCase()
+                );
+
+                if (merchantApp) {
+                  actualFirstName = merchantApp.merchantData.firstName;
+                  actualLastName = merchantApp.merchantData.lastName;
+                  console.log('🏪 Found merchant data from application:', actualFirstName, actualLastName);
+                }
+              }
+            } catch (error) {
+              console.error('Error loading merchant data from applications:', error);
+            }
+
+            console.log('🏪 Generated/Retrieved merchant ID for', email, ':', uniqueUid);
           }
 
           currentUser = {
             uid: uniqueUid,
             email: user.email,
-            displayName: user.displayName
+            displayName: actualFirstName
           };
 
           localStorage.setItem('fallback_user', JSON.stringify({
             ...currentUser,
-            userType: user.userType
+            userType: user.userType,
+            firstName: actualFirstName,
+            lastName: actualLastName
           }));
 
           console.log('✅ Fallback sign in successful');

@@ -3,6 +3,7 @@ import { User } from 'firebase/auth';
 import { onAuthStateChange, getUserData, UserData } from '@/lib/auth';
 import { getCurrentFallbackUser } from '@/lib/fallback-auth';
 import { onAuthStateChangeDev } from '@/lib/auth-dev';
+import { getStoreByOwnerId, updateStore } from '@/lib/store-management';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -47,12 +48,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.warn('⚠️ Failed to refresh user data:', error);
         // Create mock user data for offline mode
         if (isOfflineMode) {
+          // تحديث بيانات المستخدم مع البحث عن الأسماء الحقيقية
+          let actualFirstName = 'مستخدم';
+          let actualLastName = 'تجريبي';
+          let actualUserType = 'admin';
+
+          // البحث عن بيانات المستخدم المحفوظة
+          const stored = localStorage.getItem('fallback_user');
+          if (stored) {
+            try {
+              const userData = JSON.parse(stored);
+              actualUserType = userData.userType || 'admin';
+              actualFirstName = userData.firstName || actualFirstName;
+              actualLastName = userData.lastName || actualLastName;
+            } catch (error) {
+              console.error('Error parsing stored user data:', error);
+            }
+          }
+
           setUserData({
             uid: currentUser.uid,
             email: currentUser.email || '',
-            firstName: 'مستخدم',
-            lastName: 'تجريبي',
-            userType: 'admin',
+            firstName: actualFirstName,
+            lastName: actualLastName,
+            userType: actualUserType as 'admin' | 'merchant' | 'customer',
             createdAt: new Date(),
             updatedAt: new Date(),
             isActive: true
@@ -81,26 +100,58 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           let userType = 'admin';
           let firstName = 'مدير';
           let lastName = 'المنصة';
-          
+
           if (stored) {
             try {
               const userData = JSON.parse(stored);
               userType = userData.userType || 'admin';
-              
-              // Set appropriate names based on user type
-              if (userType === 'merchant') {
+
+              // Use stored names if available, otherwise use defaults
+              if (userData.firstName) {
+                firstName = userData.firstName;
+              } else if (userType === 'merchant') {
                 firstName = 'تاجر';
-                lastName = 'تجريبي';
               } else if (userType === 'customer') {
                 firstName = 'عميل';
+              }
+
+              if (userData.lastName) {
+                lastName = userData.lastName;
+              } else if (userType === 'merchant') {
+                lastName = 'تجريبي';
+              } else if (userType === 'customer') {
                 lastName = 'تجريبي';
               }
-              
+
               console.log('📋 Loaded user data from localStorage:', {
                 email: user.email,
                 userType: userType,
-                firstName: firstName
+                firstName: firstName,
+                lastName: lastName
               });
+
+              // إذا كان تاجراً وتم تحديث اسمه، حدث اسم المتجر أيضاً
+              if (userType === 'merchant' && firstName && firstName !== 'تاجر') {
+                setTimeout(() => {
+                  try {
+                    const merchantStore = getStoreByOwnerId(user.uid);
+
+                    if (merchantStore) {
+                      const expectedStoreName = `متجر ${firstName}`;
+                      if (merchantStore.name !== expectedStoreName) {
+                        console.log('🔧 Auto-updating store name for merchant:', firstName);
+                        updateStore(merchantStore.id, {
+                          name: expectedStoreName,
+                          description: `متجر ${firstName} للتجارة الإلكترونية`
+                        });
+                        console.log('✅ Store name auto-updated');
+                      }
+                    }
+                  } catch (error) {
+                    console.error('Error auto-updating store name:', error);
+                  }
+                }, 1000); // تأخير صغير للتأكد من تحميل البيانات
+              }
             } catch (error) {
               console.warn('Error parsing stored user data:', error);
             }

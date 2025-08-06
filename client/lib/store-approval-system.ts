@@ -146,12 +146,133 @@ export const approveStoreApplication = async (
   };
 
   localStorage.setItem('storeApplications', JSON.stringify(applications));
-  
-  // Here you would typically:
-  // 1. Create the actual store in the database
-  // 2. Update user permissions
-  // 3. Send approval email
-  
+
+  // إنشاء المتجر الفعلي في نظام إدارة المتاجر
+  try {
+    const { createStore } = await import('./store-management');
+
+    const application = applications[appIndex];
+    const subdomain = application.storeConfig.customization.storeName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      || `store-${Date.now()}`;
+
+    const newStore = createStore({
+      name: application.storeConfig.customization.storeName || application.merchantData.businessName,
+      description: application.storeConfig.customization.storeDescription || `متجر ${application.merchantData.firstName} للتجارة الإل��ترونية`,
+      subdomain: subdomain,
+      ownerId: application.merchantId,
+      template: application.storeConfig.template,
+      customization: {
+        colors: {
+          primary: application.storeConfig.customization.colors.primary,
+          secondary: application.storeConfig.customization.colors.secondary,
+          background: application.storeConfig.customization.colors.background,
+          text: '#1e293b',
+          accent: '#3b82f6',
+          headerBackground: '#ffffff',
+          footerBackground: '#f8fafc',
+          cardBackground: '#ffffff',
+          borderColor: '#e5e7eb'
+        },
+        fonts: {
+          heading: 'Cairo',
+          body: 'Cairo',
+          size: {
+            small: '14px',
+            medium: '16px',
+            large: '18px',
+            xlarge: '24px'
+          }
+        },
+        layout: {
+          headerStyle: 'modern' as const,
+          footerStyle: 'detailed' as const,
+          productGridColumns: 4,
+          containerWidth: 'normal' as const,
+          borderRadius: 'medium' as const,
+          spacing: 'normal' as const
+        },
+        homepage: {
+          showHeroSlider: true,
+          showFeaturedProducts: true,
+          showCategories: true,
+          showNewsletter: true,
+          showTestimonials: false,
+          showStats: true,
+          showBrands: false,
+          heroImages: [],
+          heroTexts: [
+            { title: `مرحباً بكم في ${application.storeConfig.customization.storeName}`, subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق الآن' }
+          ],
+          sectionsOrder: ['hero', 'categories', 'featured', 'stats']
+        },
+        pages: {
+          enableBlog: false,
+          enableReviews: true,
+          enableWishlist: true,
+          enableCompare: false,
+          enableLiveChat: false,
+          enableFAQ: true,
+          enableAboutUs: true,
+          enableContactUs: true
+        },
+        branding: {
+          logo: '',
+          favicon: '',
+          watermark: '',
+          showPoweredBy: true
+        },
+        effects: {
+          animations: true,
+          transitions: true,
+          shadows: true,
+          gradients: true
+        }
+      },
+      settings: {
+        currency: 'SAR',
+        language: 'ar',
+        timezone: 'Asia/Riyadh',
+        shipping: {
+          enabled: true,
+          freeShippingThreshold: 200,
+          defaultCost: 15,
+          zones: []
+        },
+        payment: {
+          cashOnDelivery: true,
+          bankTransfer: false,
+          creditCard: false,
+          paypal: false,
+          stripe: false
+        },
+        taxes: {
+          enabled: false,
+          rate: 0,
+          includeInPrice: false
+        },
+        notifications: {
+          emailNotifications: true,
+          smsNotifications: false,
+          pushNotifications: false
+        }
+      },
+      status: 'active' as const
+    });
+
+    console.log('✅ Store created successfully:', newStore);
+
+    // إضافة منتجات نموذجية للمتجر الجديد
+    const { initializeSampleData } = await import('./store-management');
+    initializeSampleData(newStore.id);
+
+  } catch (error) {
+    console.error('❌ Error creating store:', error);
+  }
+
   console.log('✅ Store application approved:', applications[appIndex]);
   return true;
 };
@@ -219,12 +340,12 @@ export const initializeSampleApplications = () => {
         id: 'app_1',
         merchantId: 'merchant_1',
         merchantData: {
-          firstName: 'أحمد',
+          firstName: 'أ��مد',
           lastName: 'محمد',
           email: 'ahmed@example.com',
           phone: '+966501234567',
           city: 'الرياض',
-          businessName: 'متجر الأزياء العصرية',
+          businessName: 'متجر الأزياء العصر��ة',
           businessType: 'fashion'
         },
         storeConfig: {

@@ -82,29 +82,62 @@ export interface StoreCustomization {
     background: string;
     text: string;
     accent: string;
+    headerBackground: string;
+    footerBackground: string;
+    cardBackground: string;
+    borderColor: string;
   };
   fonts: {
     heading: string;
     body: string;
+    size: {
+      small: string;
+      medium: string;
+      large: string;
+      xlarge: string;
+    };
   };
   layout: {
-    headerStyle: 'modern' | 'classic' | 'minimal';
-    footerStyle: 'simple' | 'detailed' | 'compact';
+    headerStyle: 'modern' | 'classic' | 'minimal' | 'elegant';
+    footerStyle: 'simple' | 'detailed' | 'compact' | 'mega';
     productGridColumns: number;
+    containerWidth: 'full' | 'wide' | 'normal' | 'narrow';
+    borderRadius: 'none' | 'small' | 'medium' | 'large' | 'full';
+    spacing: 'tight' | 'normal' | 'relaxed' | 'loose';
   };
   homepage: {
     showHeroSlider: boolean;
     showFeaturedProducts: boolean;
     showCategories: boolean;
     showNewsletter: boolean;
+    showTestimonials: boolean;
+    showStats: boolean;
+    showBrands: boolean;
     heroImages: string[];
     heroTexts: { title: string; subtitle: string; buttonText: string }[];
+    sectionsOrder: string[];
   };
   pages: {
     enableBlog: boolean;
     enableReviews: boolean;
     enableWishlist: boolean;
     enableCompare: boolean;
+    enableLiveChat: boolean;
+    enableFAQ: boolean;
+    enableAboutUs: boolean;
+    enableContactUs: boolean;
+  };
+  branding: {
+    logo: string;
+    favicon: string;
+    watermark: string;
+    showPoweredBy: boolean;
+  };
+  effects: {
+    animations: boolean;
+    transitions: boolean;
+    shadows: boolean;
+    gradients: boolean;
   };
 }
 
@@ -218,6 +251,88 @@ const STORAGE_KEYS = {
   CUSTOMERS: 'customers'
 };
 
+// Cross-window communication functions
+export const broadcastDataChange = (type: string, data: any) => {
+  // Send message to all other windows/tabs
+  try {
+    window.postMessage({
+      type: 'DATA_UPDATE',
+      dataType: type,
+      data: data,
+      timestamp: Date.now()
+    }, '*');
+
+    // Also trigger storage event for same-origin tabs
+    localStorage.setItem(`sync_${type}`, JSON.stringify({
+      data: data,
+      timestamp: Date.now()
+    }));
+
+    console.log(`📡 Broadcasting ${type} data change:`, data.length || Object.keys(data).length, 'items');
+  } catch (error) {
+    console.error('Error broadcasting data change:', error);
+  }
+};
+
+// Listen for storage changes from other tabs
+export const setupStorageListener = () => {
+  if (typeof window === 'undefined') return;
+
+  window.addEventListener('storage', (e) => {
+    if (e.key?.startsWith('sync_')) {
+      const dataType = e.key.replace('sync_', '');
+      console.log(`📡 Received storage sync for ${dataType}`);
+
+      // Force reload of specific data type
+      if (dataType === 'stores') {
+        window.dispatchEvent(new CustomEvent('storesUpdated'));
+      }
+    }
+  });
+
+  // Also listen for direct window messages
+  window.addEventListener('message', (e) => {
+    if (e.data.type === 'DATA_UPDATE') {
+      console.log(`📡 Received data update for ${e.data.dataType}`);
+      window.dispatchEvent(new CustomEvent(`${e.data.dataType}Updated`, {
+        detail: e.data.data
+      }));
+    }
+  });
+};
+
+// Enhanced sync function for stores specifically
+export const syncStoresData = (): Store[] => {
+  try {
+    // Try localStorage first
+    let stores = getStores();
+
+    // If no stores in localStorage, try sessionStorage
+    if (stores.length === 0) {
+      const sessionData = sessionStorage.getItem(STORAGE_KEYS.STORES);
+      if (sessionData) {
+        console.log('🔄 Syncing stores from sessionStorage to localStorage');
+        localStorage.setItem(STORAGE_KEYS.STORES, sessionData);
+        stores = getStores(); // Re-fetch after sync
+      }
+    }
+
+    // Request data from parent window if available
+    if (stores.length === 0 && window.opener && !window.opener.closed) {
+      console.log('🔄 Requesting stores data from parent window');
+      window.opener.postMessage({
+        type: 'REQUEST_STORE_DATA',
+        timestamp: Date.now()
+      }, '*');
+    }
+
+    return stores;
+  } catch (error) {
+    console.error('Error syncing stores data:', error);
+    return [];
+  }
+};
+
 // Store Management Functions
 export const createStore = (storeData: Omit<Store, 'id' | 'createdAt' | 'updatedAt'>): Store => {
   const stores = getStores();
@@ -227,12 +342,15 @@ export const createStore = (storeData: Omit<Store, 'id' | 'createdAt' | 'updated
     createdAt: new Date(),
     updatedAt: new Date()
   };
-  
-  stores.push(store);
-  localStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
 
-  // Also save to sessionStorage for cross-tab communication
+  stores.push(store);
+
+  // Save to both localStorage and sessionStorage
+  localStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
   sessionStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
+
+  // Notify other windows about the data change
+  broadcastDataChange('stores', stores);
 
   console.log('✅ Store created:', store);
   return store;
@@ -268,22 +386,25 @@ export const getStoreById = (storeId: string): Store | null => {
 export const updateStore = (storeId: string, updates: Partial<Store>): Store | null => {
   const stores = getStores();
   const index = stores.findIndex(store => store.id === storeId);
-  
+
   if (index !== -1) {
     stores[index] = {
       ...stores[index],
       ...updates,
       updatedAt: new Date()
     };
-    localStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
 
-    // Also save to sessionStorage for cross-tab communication
+    // Save to both localStorage and sessionStorage
+    localStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
     sessionStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
+
+    // Notify other windows about the data change
+    broadcastDataChange('stores', stores);
 
     console.log('✅ Store updated:', stores[index]);
     return stores[index];
   }
-  
+
   return null;
 };
 
@@ -296,9 +417,16 @@ export const createProduct = (productData: Omit<Product, 'id' | 'createdAt' | 'u
     createdAt: new Date(),
     updatedAt: new Date()
   };
-  
+
   products.push(product);
+
+  // Save to both localStorage and sessionStorage
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+  sessionStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+
+  // Notify other windows about the data change
+  broadcastDataChange('products', products);
+
   console.log('✅ Product created:', product);
   return product;
 };
@@ -331,18 +459,25 @@ export const getProductById = (productId: string): Product | null => {
 export const updateProduct = (productId: string, updates: Partial<Product>): Product | null => {
   const products = getProducts();
   const index = products.findIndex(product => product.id === productId);
-  
+
   if (index !== -1) {
     products[index] = {
       ...products[index],
       ...updates,
       updatedAt: new Date()
     };
+
+    // Save to both localStorage and sessionStorage
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    sessionStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+
+    // Notify other windows about the data change
+    broadcastDataChange('products', products);
+
     console.log('✅ Product updated:', products[index]);
     return products[index];
   }
-  
+
   return null;
 };
 
@@ -366,9 +501,16 @@ export const createCategory = (categoryData: Omit<Category, 'id'>): Category => 
     ...categoryData,
     id: `category_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   };
-  
+
   categories.push(category);
+
+  // Save to both localStorage and sessionStorage
   localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+  sessionStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+
+  // Notify other windows about the data change
+  broadcastDataChange('categories', categories);
+
   console.log('✅ Category created:', category);
   return category;
 };
@@ -506,7 +648,7 @@ export const initializeSampleData = (storeId: string) => {
   const categories = [
     { name: 'الإلكترونيات', description: 'أجهزة إلكترونية وتقنية', sort: 1 },
     { name: 'الأزياء', description: 'ملابس وأحذية وإكسسوارات', sort: 2 },
-    { name: 'المنزل والحديقة', description: 'أدوات منزلية وديكور', sort: 3 },
+    { name: 'المن��ل والحديقة', description: 'أدوات منزلية وديكور', sort: 3 },
     { name: 'الكتب', description: 'كتب ومراجع علمية', sort: 4 }
   ];
   
@@ -588,7 +730,7 @@ export const initializeSampleData = (storeId: string) => {
   // Sample customers
   const customers = [
     {
-      name: 'أحمد محمد علي',
+      name: 'أحمد محم�� علي',
       email: 'ahmed@example.com',
       phone: '+966501234567',
       totalOrders: 5,

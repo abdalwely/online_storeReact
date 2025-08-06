@@ -61,9 +61,11 @@ export default function AddProduct() {
   });
 
   const [images, setImages] = useState<string[]>([]);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [newTag, setNewTag] = useState('');
   const [newSpec, setNewSpec] = useState({ key: '', value: '' });
   const [showVariants, setShowVariants] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
 
   if (!store) {
     return (
@@ -139,6 +141,49 @@ export default function AddProduct() {
     });
   };
 
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+
+    if (files.length === 0) return;
+
+    setUploadingImages(true);
+
+    // Convert files to base64 URLs for preview
+    const promises = files.map(file => {
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          resolve(e.target?.result as string);
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    Promise.all(promises).then(base64Images => {
+      setImages(prev => [...prev, ...base64Images]);
+      setImageFiles(prev => [...prev, ...files]);
+      setUploadingImages(false);
+
+      toast({
+        title: 'تم رفع الصور بنجاح',
+        description: `تم رفع ${files.length} صور`
+      });
+    }).catch(error => {
+      console.error('Error uploading images:', error);
+      setUploadingImages(false);
+      toast({
+        title: 'خطأ في رفع الصور',
+        description: 'حدث خطأ أثناء رفع الصور',
+        variant: 'destructive'
+      });
+    });
+  };
+
+  const removeImage = (index: number) => {
+    setImages(prev => prev.filter((_, i) => i !== index));
+    setImageFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSaveProduct = async () => {
     if (!productData.name || !productData.description || !productData.price || !productData.category) {
       toast({
@@ -164,9 +209,24 @@ export default function AddProduct() {
         reviewCount: 0
       });
 
+      // Broadcast product creation to other windows/tabs
+      window.postMessage({
+        type: 'PRODUCT_CREATED',
+        product: newProduct,
+        storeId: store.id,
+        timestamp: Date.now()
+      }, '*');
+
+      // Also trigger storage event for same-origin tabs
+      localStorage.setItem('product_creation_sync', JSON.stringify({
+        product: newProduct,
+        storeId: store.id,
+        timestamp: Date.now()
+      }));
+
       toast({
         title: 'تم إنشاء المنتج بنجاح! 🎉',
-        description: `تم إضافة ${productData.name} إلى متجرك`
+        description: `تم إضافة ${productData.name} إلى متجرك. يمكنك الآن مشاهدته في المتجر.`
       });
 
       navigate('/merchant/products');
@@ -404,7 +464,7 @@ export default function AddProduct() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Palette className="h-5 w-5" />
-                  الكلمات المفتاحية
+                  الكلم��ت المفتاحية
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -479,21 +539,62 @@ export default function AddProduct() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                  <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600">اسحب الصور هنا أو انقر لاختيار</p>
-                  <Button variant="outline" size="sm" className="mt-2">
-                    اختيار الصور
-                  </Button>
-                </div>
-                
-                {images.length === 0 && (
-                  <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      سيتم استخدام صورة افتراضية للمنتج
-                    </p>
+                <div className="space-y-4">
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                      id="image-upload"
+                      disabled={uploadingImages}
+                    />
+                    <label htmlFor="image-upload" className="cursor-pointer">
+                      <Upload className={`h-8 w-8 mx-auto mb-2 ${uploadingImages ? 'animate-pulse text-blue-500' : 'text-gray-400'}`} />
+                      <p className="text-sm text-gray-600">
+                        {uploadingImages ? 'جاري رفع الصور...' : 'اسحب الصور هنا أو انقر لاختيار'}
+                      </p>
+                      <Button variant="outline" size="sm" className="mt-2" disabled={uploadingImages}>
+                        {uploadingImages ? 'جاري الرفع...' : 'اختيار الصور'}
+                      </Button>
+                    </label>
                   </div>
-                )}
+
+                  {/* عرض الصور المرفوعة */}
+                  {images.length > 0 && (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {images.map((image, index) => (
+                        <div key={index} className="relative group">
+                          <img
+                            src={image}
+                            alt={`Product ${index + 1}`}
+                            className="w-full h-24 object-cover rounded-lg border"
+                          />
+                          <button
+                            onClick={() => removeImage(index)}
+                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                          {index === 0 && (
+                            <Badge className="absolute bottom-1 left-1 text-xs bg-blue-500">
+                              الصورة الرئيسية
+                            </Badge>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {images.length === 0 && (
+                    <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                      <p className="text-sm text-blue-700">
+                        سيتم استخدام صورة افتراضية للمنتج
+                      </p>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
 

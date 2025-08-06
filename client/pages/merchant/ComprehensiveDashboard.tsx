@@ -28,6 +28,7 @@ import {
   getCustomers,
   Customer
 } from '@/lib/store-management';
+import { storeSyncManager } from '@/lib/store-sync';
 import { 
   Store as StoreIcon,
   Package,
@@ -59,6 +60,7 @@ import {
   Palette,
   Globe,
   Smartphone,
+  ExternalLink,
   Monitor,
   Target,
   TrendingDown,
@@ -231,6 +233,27 @@ export default function ComprehensiveMerchantDashboard() {
         }
       }
 
+      // تحديث اسم المتجر إذا كان مختلفاً عن الاسم الحقيقي للتاجر
+      if (merchantStore && userData?.firstName && userData.firstName !== 'تاجر') {
+        const expectedStoreName = `متجر ${userData.firstName}`;
+        if (merchantStore.name !== expectedStoreName) {
+          console.log('🔧 Updating store name from', merchantStore.name, 'to', expectedStoreName);
+          const updatedStore = updateStore(merchantStore.id, {
+            name: expectedStoreName,
+            description: `متجر ${userData.firstName} للتجارة الإلكترونية`
+          });
+
+          if (updatedStore) {
+            merchantStore = updatedStore;
+            console.log('✅ Store name updated successfully');
+            toast({
+              title: 'تم تحديث اسم المتجر',
+              description: `اسم متجرك الآن: ${expectedStoreName}`
+            });
+          }
+        }
+      }
+
       setStore(merchantStore);
 
       if (merchantStore) {
@@ -355,32 +378,65 @@ export default function ComprehensiveMerchantDashboard() {
             secondary: '#64748b',
             background: '#ffffff',
             text: '#1e293b',
-            accent: '#f59e0b'
+            accent: '#f59e0b',
+            headerBackground: '#ffffff',
+            footerBackground: '#f8fafc',
+            cardBackground: '#ffffff',
+            borderColor: '#e5e7eb'
           },
           fonts: {
             heading: 'Cairo',
-            body: 'Inter'
+            body: 'Cairo',
+            size: {
+              small: '14px',
+              medium: '16px',
+              large: '18px',
+              xlarge: '24px'
+            }
           },
           layout: {
-            headerStyle: 'modern',
-            footerStyle: 'detailed',
-            productGridColumns: 3
+            headerStyle: 'modern' as const,
+            footerStyle: 'detailed' as const,
+            productGridColumns: 4,
+            containerWidth: 'normal' as const,
+            borderRadius: 'medium' as const,
+            spacing: 'normal' as const
           },
           homepage: {
             showHeroSlider: true,
             showFeaturedProducts: true,
             showCategories: true,
             showNewsletter: true,
-            heroImages: ['/hero-1.jpg', '/hero-2.jpg'],
+            showTestimonials: false,
+            showStats: true,
+            showBrands: false,
+            heroImages: [],
             heroTexts: [
               { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق الآن' }
-            ]
+            ],
+            sectionsOrder: ['hero', 'categories', 'featured', 'stats']
           },
           pages: {
             enableBlog: false,
             enableReviews: true,
             enableWishlist: true,
-            enableCompare: false
+            enableCompare: false,
+            enableLiveChat: false,
+            enableFAQ: true,
+            enableAboutUs: true,
+            enableContactUs: true
+          },
+          branding: {
+            logo: '',
+            favicon: '',
+            watermark: '',
+            showPoweredBy: true
+          },
+          effects: {
+            animations: true,
+            transitions: true,
+            shadows: true,
+            gradients: true
           }
         },
         settings: {
@@ -453,7 +509,7 @@ export default function ComprehensiveMerchantDashboard() {
       console.error('Error creating store:', error);
       toast({
         title: 'خطأ في إنشاء المتجر',
-        description: 'حدث خطأ أثناء إن��اء المتجر، يرجى المحاولة مرة أخرى',
+        description: 'حدث خطأ أثناء إن��اء المتجر، يرجى المحاولة مرة أ��رى',
         variant: 'destructive'
       });
       return null;
@@ -483,7 +539,7 @@ export default function ComprehensiveMerchantDashboard() {
       loadMerchantData();
       toast({
         title: 'تم تحديث المنتج',
-        description: 'تم حفظ التغييرات بنجاح'
+        description: '��م حفظ التغييرات بنجاح'
       });
     } catch (error) {
       toast({
@@ -497,7 +553,7 @@ export default function ComprehensiveMerchantDashboard() {
   const handleSendPromotionalMessage = (customerId: string, message: string) => {
     // Mock implementation
     toast({
-      title: 'تم إرسال الرسالة',
+      title: 'تم إرسا�� الرسالة',
       description: 'تم إرسال الرسالة الترويجية بن��اح'
     });
   };
@@ -523,7 +579,7 @@ export default function ComprehensiveMerchantDashboard() {
     const statusMap = {
       'pending': 'في الانتظار',
       'confirmed': 'مؤكد',
-      'processing': 'قيد المعا��جة',
+      'processing': 'قيد ال��عا��جة',
       'shipped': 'تم الشحن',
       'delivered': 'تم التوصيل',
       'cancelled': 'ملغي'
@@ -533,14 +589,14 @@ export default function ComprehensiveMerchantDashboard() {
 
   const filteredOrders = orders.filter(order => {
     const matchesStatus = filterStatus === 'all' || order.status === filterStatus;
-    const matchesSearch = order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         order.customer.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (order.orderNumber?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+                         (order.customer?.name?.toLowerCase() || '').includes(searchTerm.toLowerCase());
     return matchesStatus && matchesSearch;
   });
 
   const filteredProducts = products.filter(product => {
-    return product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-           product.category.toLowerCase().includes(searchTerm.toLowerCase());
+    return (product.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+           (product.category?.toLowerCase() || '').includes(searchTerm.toLowerCase());
   });
 
   if (loading) {
@@ -577,7 +633,7 @@ export default function ComprehensiveMerchantDashboard() {
               إنشاء متجري الإلكتروني المتطور
             </Button>
             <p className="text-sm text-gray-500 text-center mt-4">
-              سيتم إنشاء متجرك مع منتجات تجريبية ولوحة تحكم شاملة
+              سيتم إنشاء متجرك مع منتجات تجريبية ول��حة تحكم شاملة
             </p>
           </CardContent>
         </Card>
@@ -596,13 +652,67 @@ export default function ComprehensiveMerchantDashboard() {
               <p className="text-gray-600 mt-2">مرحباً {userData?.firstName}، إدر متجرك بكل احترافية</p>
             </div>
             <div className="flex gap-3">
-              <Button 
-                onClick={() => navigate('/merchant/store-builder')}
+              <Button
+                onClick={() => navigate('/merchant/advanced-customization')}
                 variant="outline"
               >
                 <Palette className="h-4 w-4 mr-2" />
                 تخصيص المتجر
               </Button>
+              <Button
+                onClick={() => {
+                  // Ensure data is synced before opening new window
+                  const stores = getStores();
+                  storeSyncManager.syncStoreData(stores);
+
+                  // Open store in new window
+                  const storeWindow = window.open(
+                    `/store/${store.subdomain}?preview=true&_t=${Date.now()}`,
+                    '_blank',
+                    'width=1200,height=800,scrollbars=yes,resizable=yes'
+                  );
+
+                  // Send data to the new window immediately and repeatedly
+                  if (storeWindow) {
+                    let attempts = 0;
+                    const maxAttempts = 10;
+
+                    const sendData = () => {
+                      if (storeWindow.closed || attempts >= maxAttempts) {
+                        return;
+                      }
+
+                      try {
+                        storeWindow.postMessage({
+                          type: 'STORE_DATA_RESPONSE',
+                          stores: stores,
+                          timestamp: Date.now()
+                        }, '*');
+                        attempts++;
+                        console.log(`📤 Sent store data to new window (attempt ${attempts})`);
+                      } catch (e) {
+                        console.log('⏳ Window not ready yet, will retry...');
+                      }
+
+                      setTimeout(sendData, 1000);
+                    };
+
+                    // Start sending data after a short delay
+                    setTimeout(sendData, 500);
+                  }
+
+                  console.log('🔗 Opening store in new window:', store.subdomain);
+                  toast({
+                    title: 'فتح المتجر',
+                    description: 'تم فتح المتجر في نافذة جديدة'
+                  });
+                }}
+                className="bg-blue-600 hover:bg-blue-700 mr-2"
+              >
+                <ExternalLink className="h-4 w-4 mr-2" />
+                فتح المتجر
+              </Button>
+
               <Dialog open={storePreviewOpen} onOpenChange={setStorePreviewOpen}>
                 <DialogTrigger asChild>
                   <Button className="bg-green-600 hover:bg-green-700">
@@ -612,7 +722,7 @@ export default function ComprehensiveMerchantDashboard() {
                 </DialogTrigger>
                 <DialogContent className="max-w-6xl h-[80vh]">
                   <DialogHeader>
-                    <DialogTitle>معاينة المتجر - {store.name}</DialogTitle>
+                    <DialogTitle>مع��ينة المتجر - {store.name}</DialogTitle>
                   </DialogHeader>
                   <div className="flex-1 bg-white rounded-lg overflow-hidden">
                     <div className="p-4 bg-gray-50 border-b text-sm space-y-2">
@@ -620,7 +730,7 @@ export default function ComprehensiveMerchantDashboard() {
                       <div>رابط المتجر الم��لي: /store/{store.subdomain}</div>
                       <div>رابط المتجر الكامل: {window.location.origin}/store/{store.subdomain}</div>
                       <div>معرف المتجر: {store.id}</div>
-                      <div>اسم المتجر: {store.name}</div>
+                      <div>اسم الم��جر: {store.name}</div>
                       <div>معرف المالك: {store.ownerId}</div>
                       <div className="flex items-center justify-between">
                         <div>
@@ -631,7 +741,7 @@ export default function ComprehensiveMerchantDashboard() {
                             : 'bg-green-100 text-green-800'
                         }`}>
                             {store.subdomain === 'store-fallback' || store.subdomain.includes('fallback') || store.ownerId === 'merchant_fallback' || store.ownerId !== userData?.uid
-                              ? 'يحتاج إصلاح'
+                              ? 'يحتاج إصل��ح'
                               : 'صحيح'}
                           </span>
                         </div>
@@ -676,13 +786,20 @@ export default function ComprehensiveMerchantDashboard() {
                       </div>
                     </div>
                     <iframe
-                      src={`/store/${store.subdomain}?debug=true`}
+                      src={`/store/${store.subdomain}?preview=true&_t=${Date.now()}`}
                       className="w-full h-full border-0"
                       title="معاينة المتجر"
                       onLoad={() => {
                         console.log('🔍 Store preview iframe loaded for:', store.subdomain);
                         console.log('🔍 Store data:', store);
                         console.log('🔍 All stores in localStorage:', getStores());
+
+                        // Ensure data is available for the iframe
+                        const stores = getStores();
+                        if (stores.length > 0) {
+                          sessionStorage.setItem('stores', JSON.stringify(stores));
+                          console.log('📤 Updated sessionStorage with stores data for iframe');
+                        }
                       }}
                     />
                   </div>
@@ -860,7 +977,7 @@ export default function ComprehensiveMerchantDashboard() {
                           </Button>
                         )}
 
-                        {/* إعادة إنشاء المتجر كحل أخير */}
+                        {/* إعادة إنشاء ال��تجر كحل أخير */}
                         {(store.subdomain === 'store-fallback' || !store.subdomain.includes('store-') || store.subdomain.includes('fallback') || store.ownerId === 'merchant_fallback' || store.ownerId !== userData?.uid) && (
                           <Button
                             size="sm"
@@ -880,7 +997,7 @@ export default function ComprehensiveMerchantDashboard() {
                                 if (newStore) {
                                   setStore(newStore);
                                   toast({
-                                    title: 'تم إعادة إنشاء المتجر بنجاح',
+                                    title: 'تم إعادة إنشاء المتجر بن��اح',
                                     description: `رابط متجرك الجديد: ${newStore.subdomain}`
                                   });
 
@@ -909,7 +1026,7 @@ export default function ComprehensiveMerchantDashboard() {
 
                               toast({
                                 title: 'تم مسح البيانات',
-                                description: 'سيتم إعادة تحميل الصفحة وإنشاء حساب جديد'
+                                description: 'سيتم إعادة تحميل الصفحة وإنشاء حسا�� جديد'
                               });
 
                               // Reload page to restart with fresh data
@@ -983,7 +1100,7 @@ export default function ComprehensiveMerchantDashboard() {
                               } else {
                                 toast({
                                   title: 'المتجر محفوظ بالفعل',
-                                  description: 'لا توجد مشكلة في البيانات'
+                                  description: 'لا توجد ��شكلة في البيانات'
                                 });
                               }
                             }
@@ -1064,7 +1181,7 @@ export default function ComprehensiveMerchantDashboard() {
                       <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div>
                           <p className="font-medium">طلب #{order.orderNumber}</p>
-                          <p className="text-sm text-gray-600">{order.customer.name} - {order.total} ر.س</p>
+                          <p className="text-sm text-gray-600">{order.customer?.name || 'عميل غير محدد'} - {order.total} ر.س</p>
                         </div>
                         {getStatusBadge(order.status)}
                       </div>
@@ -1323,7 +1440,7 @@ export default function ComprehensiveMerchantDashboard() {
                           <div>
                             <h3 className="font-semibold">طلب #{order.orderNumber}</h3>
                             <p className="text-sm text-gray-600">
-                              {order.customer.name} - {order.items.length} منتج
+                              {order.customer?.name || 'عميل غير محدد'} - {order.items.length} منتج
                             </p>
                             <p className="text-xs text-gray-500">
                               {new Date(order.createdAt).toLocaleDateString('ar-SA')}
@@ -1367,7 +1484,7 @@ export default function ComprehensiveMerchantDashboard() {
                               <div className="grid grid-cols-2 gap-4">
                                 <div>
                                   <Label>اسم العميل</Label>
-                                  <p className="font-medium">{selectedOrder?.customer.name}</p>
+                                  <p className="font-medium">{selectedOrder?.customer?.name || 'عميل غير محدد'}</p>
                                 </div>
                                 <div>
                                   <Label>رقم الهاتف</Label>
@@ -1422,7 +1539,7 @@ export default function ComprehensiveMerchantDashboard() {
                 <div className="relative">
                   <Search className="h-4 w-4 absolute left-3 top-3 text-gray-400" />
                   <Input
-                    placeholder="ابحث في العملاء..."
+                    placeholder="ابحث في العم��اء..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-10 w-64"
@@ -1445,8 +1562,8 @@ export default function ComprehensiveMerchantDashboard() {
                           <Users className="h-6 w-6 text-blue-600" />
                         </div>
                         <div>
-                          <h3 className="font-semibold">{customer.name}</h3>
-                          <p className="text-sm text-gray-600">{customer.email}</p>
+                          <h3 className="font-semibold">{customer.name || 'عميل غير محدد'}</h3>
+                          <p className="text-sm text-gray-600">{customer.email || 'بريد غير محدد'}</p>
                           <p className="text-sm text-gray-600">{customer.phone}</p>
                         </div>
                       </div>
@@ -1470,7 +1587,7 @@ export default function ComprehensiveMerchantDashboard() {
                           </DialogTrigger>
                           <DialogContent>
                             <DialogHeader>
-                              <DialogTitle>إرسال رسالة ترويجية</DialogTitle>
+                              <DialogTitle>إرسال ��سالة ترويجية</DialogTitle>
                             </DialogHeader>
                             <div className="space-y-4">
                               <div>
@@ -1639,7 +1756,7 @@ export default function ComprehensiveMerchantDashboard() {
                 <CardContent>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm">الطلبا�� المكتملة</span>
+                      <span className="text-sm">��لطلبا�� المكت��لة</span>
                       <span className="font-bold text-green-600">
                         {orders.filter(o => o.status === 'delivered').length}
                       </span>
@@ -1800,7 +1917,7 @@ export default function ComprehensiveMerchantDashboard() {
                     className="w-full justify-start"
                   >
                     <Smartphone className="h-4 w-4 mr-2" />
-                    ت��سين العرض للجوال
+                    ����سين العرض للجوال
                   </Button>
                 </CardContent>
               </Card>

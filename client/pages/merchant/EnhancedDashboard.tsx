@@ -65,7 +65,29 @@ export default function EnhancedMerchantDashboard() {
       console.log('📊 Loading merchant data for user:', userData?.uid);
       
       // Load store
-      const merchantStore = getStoreByOwnerId(userData?.uid || '');
+      let merchantStore = getStoreByOwnerId(userData?.uid || '');
+
+      // تحديث اسم المتجر إذا كان مختلفاً عن الاسم الحقيقي للتاجر
+      if (merchantStore && userData?.firstName && userData.firstName !== 'تاجر') {
+        const expectedStoreName = `متجر ${userData.firstName}`;
+        if (merchantStore.name !== expectedStoreName) {
+          console.log('🔧 Updating store name from', merchantStore.name, 'to', expectedStoreName);
+          const updatedStore = updateStore(merchantStore.id, {
+            name: expectedStoreName,
+            description: `متجر ${userData.firstName} للتجارة الإلكترونية`
+          });
+
+          if (updatedStore) {
+            merchantStore = updatedStore;
+            console.log('✅ Store name updated successfully');
+            toast({
+              title: 'تم تحديث اسم المتجر',
+              description: `اسم متجرك الآن: ${expectedStoreName}`
+            });
+          }
+        }
+      }
+
       setStore(merchantStore);
 
       if (merchantStore) {
@@ -136,32 +158,65 @@ export default function EnhancedMerchantDashboard() {
             secondary: '#64748b',
             background: '#ffffff',
             text: '#1e293b',
-            accent: '#f59e0b'
+            accent: '#f59e0b',
+            headerBackground: '#ffffff',
+            footerBackground: '#f8fafc',
+            cardBackground: '#ffffff',
+            borderColor: '#e5e7eb'
           },
           fonts: {
             heading: 'Cairo',
-            body: 'Inter'
+            body: 'Cairo',
+            size: {
+              small: '14px',
+              medium: '16px',
+              large: '18px',
+              xlarge: '24px'
+            }
           },
           layout: {
-            headerStyle: 'modern',
-            footerStyle: 'detailed',
-            productGridColumns: 3
+            headerStyle: 'modern' as const,
+            footerStyle: 'detailed' as const,
+            productGridColumns: 4,
+            containerWidth: 'normal' as const,
+            borderRadius: 'medium' as const,
+            spacing: 'normal' as const
           },
           homepage: {
             showHeroSlider: true,
             showFeaturedProducts: true,
             showCategories: true,
             showNewsletter: true,
-            heroImages: ['/hero-1.jpg', '/hero-2.jpg'],
+            showTestimonials: false,
+            showStats: true,
+            showBrands: false,
+            heroImages: [],
             heroTexts: [
               { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق الآن' }
-            ]
+            ],
+            sectionsOrder: ['hero', 'categories', 'featured', 'stats']
           },
           pages: {
             enableBlog: false,
             enableReviews: true,
             enableWishlist: true,
-            enableCompare: false
+            enableCompare: false,
+            enableLiveChat: false,
+            enableFAQ: true,
+            enableAboutUs: true,
+            enableContactUs: true
+          },
+          branding: {
+            logo: '',
+            favicon: '',
+            watermark: '',
+            showPoweredBy: true
+          },
+          effects: {
+            animations: true,
+            transitions: true,
+            shadows: true,
+            gradients: true
           }
         },
         settings: {
@@ -294,7 +349,7 @@ export default function EnhancedMerchantDashboard() {
                 variant="outline"
               >
                 <Settings className="h-4 w-4 mr-2" />
-                إعدادات المتجر
+                إعدادات ال��تجر
               </Button>
               <Button 
                 onClick={() => window.open(`/store/${store.subdomain}`, '_blank')}

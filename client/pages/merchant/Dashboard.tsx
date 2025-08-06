@@ -67,7 +67,7 @@ export default function MerchantDashboard() {
       viewOrders: 'عرض الطلبات',
       storeSettings: 'إعدادات المتجر',
       viewStore: 'عرض المتجر',
-      storeAnalytics: 'تحليلات المتجر',
+      storeAnalytics: 'تحليلات ��لمتجر',
       createStore: 'إنشاء متجر',
       noStore: 'لم يتم إنشاء متجر بعد',
       createStoreDesc: 'ابدأ بإنشاء متجرك الإلكتروني الأول',
@@ -289,6 +289,30 @@ export default function MerchantDashboard() {
             {currentText.welcome}, {userData?.firstName}!
           </h1>
           <p className="text-gray-600">{currentText.dashboard}</p>
+
+          {/* تنبيه إذا كان الاسم عاماً */}
+          {userData?.firstName === 'تاجر' && (
+            <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  <Bell className="h-5 w-5 text-yellow-400" />
+                </div>
+                <div className="mr-3 rtl:ml-3 rtl:mr-0">
+                  <h3 className="text-sm font-medium text-yellow-800">
+                    يرجى تحديث بياناتك الشخصية
+                  </h3>
+                  <div className="mt-2 text-sm text-yellow-700">
+                    <p>يبدو أن اسمك الحقيقي لم يتم تحميله بشكل صحيح. لحل هذه المشكلة:</p>
+                    <ol className="list-decimal list-inside mt-2 space-y-1">
+                      <li>اذهب إ��ى <a href="/diagnostics" className="underline" target="_blank">صفحة التشخيص</a></li>
+                      <li>انقر على "إصلاح أسماء التجار"</li>
+                      <li>قم بتحديث الصفحة</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {!store ? (
@@ -397,7 +421,7 @@ export default function MerchantDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <Link to="/merchant/products">
+                  <Link to="/merchant/products/new">
                     <Button className="w-full justify-start" variant="outline">
                       <Plus className="h-4 w-4 mr-2 rtl:ml-2 rtl:mr-0" />
                       {currentText.addProduct}
@@ -425,6 +449,37 @@ export default function MerchantDashboard() {
                     </Button>
                   </Link>
                 </div>
+
+                {/* إضافة منتجات نموذجية إذا لم توجد منتجات */}
+                {stats.totalProducts === 0 && (
+                  <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-medium text-yellow-800">لا توجد منتجات في متجرك</h4>
+                        <p className="text-sm text-yellow-700">ابدأ بإضافة منتجات نموذجية لاختبار متجرك</p>
+                      </div>
+                      <Button
+                        onClick={() => {
+                          if (store) {
+                            const { initializeSampleData } = require('@/lib/store-management');
+                            initializeSampleData(store.id);
+                            loadDashboardData(); // إعادة تحميل البيانات
+                            toast({
+                              title: 'تم إضافة منتجات نموذجية! 🎉',
+                              description: 'تم إضافة 3 منتجات نموذجية لمتجرك'
+                            });
+                          }
+                        }}
+                        variant="outline"
+                        size="sm"
+                        className="text-yellow-800 border-yellow-300 hover:bg-yellow-100"
+                      >
+                        <Package className="h-4 w-4 mr-2" />
+                        إضافة منتجات نموذجية
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

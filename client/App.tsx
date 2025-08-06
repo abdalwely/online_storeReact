@@ -34,6 +34,7 @@ import AddProduct from "./pages/merchant/AddProduct";
 import OrderManagement from "./pages/merchant/OrderManagement";
 import StoreSettings from "./pages/merchant/StoreSettings";
 import PendingApproval from "./pages/merchant/PendingApproval";
+import AdvancedStoreCustomization from "./pages/merchant/AdvancedStoreCustomization";
 
 import CustomerDashboard from "./pages/customer/Dashboard";
 import AdminDashboard from "./pages/admin/Dashboard";
@@ -41,9 +42,11 @@ import EnhancedAdminDashboard from "./pages/admin/EnhancedDashboard";
 
 // Store Frontend
 import WorkingStorefront from "./pages/store/WorkingStorefront";
+import AdvancedStorefront from "./pages/store/AdvancedStorefront";
 
 // Placeholder pages
 import PlaceholderPage from "./pages/PlaceholderPage";
+import DiagnosticsPage from "./pages/DiagnosticsPage";
 
 // Connection status for debugging
 import ConnectionStatus from "./components/ConnectionStatus";
@@ -91,6 +94,11 @@ const App = () => (
             <Route path="/merchant/store-builder" element={
               <ProtectedRoute allowedRoles={['merchant']}>
                 <StoreCustomization />
+              </ProtectedRoute>
+            } />
+            <Route path="/merchant/advanced-customization" element={
+              <ProtectedRoute allowedRoles={['merchant']}>
+                <AdvancedStoreCustomization />
               </ProtectedRoute>
             } />
             <Route path="/merchant/products" element={
@@ -231,13 +239,17 @@ const App = () => (
             } />
             
             {/* Store Pages (Public store fronts) */}
-            <Route path="/store/:subdomain" element={<WorkingStorefront />} />
+            <Route path="/store/:subdomain" element={<AdvancedStorefront />} />
+            <Route path="/store-basic/:subdomain" element={<WorkingStorefront />} />
             
             {/* Marketplace Pages */}
             <Route path="/marketplace" element={<PlaceholderPage type="marketplace" />} />
             <Route path="/marketplace/search" element={<PlaceholderPage type="marketplace-search" />} />
             <Route path="/marketplace/categories" element={<PlaceholderPage type="marketplace-categories" />} />
             <Route path="/marketplace/deals" element={<PlaceholderPage type="marketplace-deals" />} />
+
+            {/* Diagnostics Page */}
+            <Route path="/diagnostics" element={<DiagnosticsPage />} />
             
             {/* Catch-all route */}
             <Route path="*" element={<NotFound />} />
@@ -248,4 +260,15 @@ const App = () => (
   </QueryClientProvider>
 );
 
-createRoot(document.getElementById("root")!).render(<App />);
+// Get the root element
+const rootElement = document.getElementById("root")!;
+
+// Create root only if it doesn't exist
+// This prevents the warning about calling createRoot multiple times
+let root = (rootElement as any)._reactRoot;
+if (!root) {
+  root = createRoot(rootElement);
+  (rootElement as any)._reactRoot = root;
+}
+
+root.render(<App />);
