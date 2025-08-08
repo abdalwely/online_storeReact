@@ -12,10 +12,13 @@ import { useToast } from '../../hooks/use-toast';
 import {
   getStoreApplications,
   approveStoreApplication,
+  getStoreApplicationById,
+  type StoreApplication
+} from '../../lib/firebase-store-approval';
+import {
   rejectStoreApplication,
   getApplicationStats,
-  initializeSampleApplications,
-  type StoreApplication
+  initializeSampleApplications
 } from '../../lib/store-approval-system';
 import {
   Store,
@@ -41,6 +44,7 @@ import {
 const EnhancedAdminDashboard: React.FC = () => {
   const { toast } = useToast();
   const [applications, setApplications] = useState<StoreApplication[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const [selectedApplication, setSelectedApplication] = useState<StoreApplication | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
@@ -53,11 +57,70 @@ const EnhancedAdminDashboard: React.FC = () => {
 
     // Load applications
     loadApplications();
+
+    // إضافة استماع لأحداث التحديث من التبويبات الأخرى
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'storeApplications') {
+        console.log('📦 Store applications updated in another tab, reloading...');
+        loadApplications();
+      }
+    };
+
+    const handleWindowMessage = (e: MessageEvent) => {
+      if (e.data.type === 'STORE_APPLICATION_SUBMITTED') {
+        console.log('📦 New store application submitted, reloading...');
+        loadApplications();
+      } else if (e.data.type === 'STORE_APPLICATION_APPROVED') {
+        console.log('✅ Store application approved, reloading...');
+        loadApplications();
+      } else if (e.data.type === 'STORE_APPLICATION_REJECTED') {
+        console.log('❌ Store application rejected, reloading...');
+        loadApplications();
+      }
+    };
+
+    // استماع لتحديثات localStorage من التبويبات الأخرى
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('message', handleWindowMessage);
+
+    // إضافة تحديث دوري للطلبات كل 30 ثانية للتأكد من التزامن
+    const intervalId = setInterval(() => {
+      console.log('🔄 Periodic refresh of applications...');
+      loadApplications();
+    }, 30000); // كل 30 ثانية
+
+    // تنظيف المستمعين والتحديث الدوري عند إلغاء تحميل المكون
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('message', handleWindowMessage);
+      clearInterval(intervalId);
+    };
   }, []);
 
-  const loadApplications = () => {
-    const apps = getStoreApplications();
-    setApplications(apps);
+  const loadApplications = async () => {
+    console.log('🔥 Loading store applications from Firebase...');
+    setLoading(true);
+
+    try {
+      const apps = await getStoreApplications();
+      console.log('📊 Loaded applications from Firebase:', {
+        total: apps.length,
+        pending: apps.filter(app => app.status === 'pending').length,
+        approved: apps.filter(app => app.status === 'approved').length,
+        rejected: apps.filter(app => app.status === 'rejected').length
+      });
+
+      setApplications(apps);
+    } catch (error) {
+      console.error('❌ Error loading applications:', error);
+      toast({
+        title: 'خطأ في تحميل البيانات',
+        description: 'حدث خطأ أثناء تحميل طلبات المتاجر',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const stats = getApplicationStats();
@@ -450,7 +513,7 @@ const EnhancedAdminDashboard: React.FC = () => {
                                 <h4 className="font-semibold mb-3">معلومات المتجر</h4>
                                 <div className="grid grid-cols-2 gap-4">
                                   <div>
-                                    <Label>اسم المتجر</Label>
+                                    <Label>اسم المتج��</Label>
                                     <p className="mt-1">{application.storeConfig.customization.storeName}</p>
                                   </div>
                                   <div>
@@ -469,7 +532,7 @@ const EnhancedAdminDashboard: React.FC = () => {
                                 <h4 className="font-semibold mb-3">التصميم المقترح</h4>
                                 <div className="grid grid-cols-2 gap-4">
                                   <div>
-                                    <Label>القالب المختار</Label>
+                                    <Label>القالب ا��مختار</Label>
                                     <p className="mt-1">{application.storeConfig.template}</p>
                                   </div>
                                   <div>
@@ -514,7 +577,7 @@ const EnhancedAdminDashboard: React.FC = () => {
                                     </DialogTrigger>
                                     <DialogContent dir="rtl">
                                       <DialogHeader>
-                                        <DialogTitle>رفض طلب إنشاء المتجر</DialogTitle>
+                                        <DialogTitle>رفض طل�� إنشاء المتجر</DialogTitle>
                                         <DialogDescription>
                                           يرجى إدخال سبب رفض الطلب لإرساله للتاجر
                                         </DialogDescription>
@@ -585,7 +648,7 @@ const EnhancedAdminDashboard: React.FC = () => {
                                       id="rejectionReason"
                                       value={rejectionReason}
                                       onChange={(e) => setRejectionReason(e.target.value)}
-                                      placeholder="اذكر سبب رفض الطلب..."
+                                      placeholder="اذك�� سبب رفض الطلب..."
                                       className="mt-1"
                                       rows={4}
                                     />

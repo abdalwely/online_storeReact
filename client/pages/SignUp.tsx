@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { createAccountEnhanced } from '@/lib/auth-enhanced';
 import { enhancedStoreTemplates } from '@/lib/enhanced-templates';
-import { submitStoreApplication } from '@/lib/store-approval-system';
+import { submitStoreApplication } from '@/lib/firebase-store-approval';
 import { 
   Store, 
   ShoppingBag, 
@@ -97,7 +97,7 @@ export default function SignUp() {
       customizeStore: 'خصص متجرك',
       primaryColor: 'اللون الأساسي',
       secondaryColor: 'اللون الثانوي',
-      backgroundColor: 'لون الخلفية',
+      backgroundColor: 'ل��ن الخلفية',
       storeNameLabel: 'اسم المتجر',
       storeDescLabel: 'وصف المتجر',
       next: 'التالي',
@@ -272,13 +272,26 @@ export default function SignUp() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (activeTab === 'merchant' && currentStep < 3) {
+
+    // For merchants, only allow submission on step 3 (after customization)
+    if (activeTab === 'merchant' && currentStep !== 3) {
       return;
     }
 
     if (activeTab === 'customer' && !validateStep1()) {
       return;
+    }
+
+    // For merchants on step 3, validate customization fields
+    if (activeTab === 'merchant' && currentStep === 3) {
+      if (!customization.storeName.trim() || !customization.storeDescription.trim()) {
+        toast({
+          title: 'خطأ',
+          description: 'يرجى ملء اسم المتجر ووصفه',
+          variant: 'destructive'
+        });
+        return;
+      }
     }
 
     setLoading(true);
@@ -296,9 +309,9 @@ export default function SignUp() {
       };
 
       const result = await createAccountEnhanced(formData.email, formData.password, userData);
-      
+
       if (result.success) {
-        // For merchants, submit store application
+        // For merchants, submit store application only after all steps are completed
         if (activeTab === 'merchant') {
           try {
             const applicationId = await submitStoreApplication(

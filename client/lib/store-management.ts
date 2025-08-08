@@ -345,14 +345,39 @@ export const createStore = (storeData: Omit<Store, 'id' | 'createdAt' | 'updated
 
   stores.push(store);
 
-  // Save to both localStorage and sessionStorage
-  localStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
-  sessionStorage.setItem(STORAGE_KEYS.STORES, JSON.stringify(stores));
+  // Save to multiple storage locations for reliability
+  const storeDataString = JSON.stringify(stores);
+  localStorage.setItem(STORAGE_KEYS.STORES, storeDataString);
+  sessionStorage.setItem(STORAGE_KEYS.STORES, storeDataString);
 
-  // Notify other windows about the data change
+  // Also save individual store for quick lookup
+  localStorage.setItem(`store_${store.subdomain}`, JSON.stringify(store));
+  sessionStorage.setItem(`store_${store.subdomain}`, JSON.stringify(store));
+
+  // تحقق من الحفظ
+  const savedStores = localStorage.getItem(STORAGE_KEYS.STORES);
+  const parsedSaved = savedStores ? JSON.parse(savedStores) : [];
+  console.log('💾 Stores saved verification - Total stored:', parsedSaved.length);
+  console.log('💾 Individual store saved:', localStorage.getItem(`store_${store.subdomain}`) ? 'Yes' : 'No');
+
+  // Enhanced broadcasting with immediate effect
   broadcastDataChange('stores', stores);
 
-  console.log('✅ Store created:', store);
+  // Additional immediate broadcast for new store
+  window.postMessage({
+    type: 'STORE_CREATED_IMMEDIATE',
+    store: store,
+    allStores: stores,
+    timestamp: Date.now()
+  }, '*');
+
+  console.log('✅ Store created successfully:', {
+    id: store.id,
+    name: store.name,
+    subdomain: store.subdomain,
+    ownerId: store.ownerId,
+    totalStores: stores.length
+  });
   return store;
 };
 
@@ -376,6 +401,65 @@ export const getStores = (): Store[] => {
 export const getStoreByOwnerId = (ownerId: string): Store | null => {
   const stores = getStores();
   return stores.find(store => store.ownerId === ownerId) || null;
+};
+
+export const getStoreBySubdomain = (subdomain: string): Store | null => {
+  console.log('🔍 getStoreBySubdomain called for:', subdomain);
+
+  // Try individual store lookup from localStorage first
+  const individualStoreLocal = localStorage.getItem(`store_${subdomain}`);
+  if (individualStoreLocal) {
+    try {
+      const store = JSON.parse(individualStoreLocal);
+      console.log('✅ Found store in localStorage individual storage:', store.name);
+      return {
+        ...store,
+        createdAt: new Date(store.createdAt),
+        updatedAt: new Date(store.updatedAt)
+      };
+    } catch (error) {
+      console.error('Error parsing individual store from localStorage:', error);
+    }
+  }
+
+  // Try individual store lookup from sessionStorage
+  const individualStoreSession = sessionStorage.getItem(`store_${subdomain}`);
+  if (individualStoreSession) {
+    try {
+      const store = JSON.parse(individualStoreSession);
+      console.log('✅ Found store in sessionStorage individual storage:', store.name);
+      // Also save to localStorage for future use
+      localStorage.setItem(`store_${subdomain}`, individualStoreSession);
+      return {
+        ...store,
+        createdAt: new Date(store.createdAt),
+        updatedAt: new Date(store.updatedAt)
+      };
+    } catch (error) {
+      console.error('Error parsing individual store from sessionStorage:', error);
+    }
+  }
+
+  // Fallback to searching all stores from localStorage
+  const stores = getStores();
+  console.log('🔍 Searching through', stores.length, 'stores for subdomain:', subdomain);
+
+  const foundStore = stores.find(store => {
+    const match = store.subdomain === subdomain;
+    console.log(`🔍 Checking store ${store.name} (${store.subdomain}): ${match ? '✅ MATCH' : '❌ NO MATCH'}`);
+    return match;
+  });
+
+  if (foundStore) {
+    console.log('✅ Found store in stores list:', foundStore.name);
+    // Cache it for future fast lookups
+    localStorage.setItem(`store_${subdomain}`, JSON.stringify(foundStore));
+    sessionStorage.setItem(`store_${subdomain}`, JSON.stringify(foundStore));
+  } else {
+    console.log('❌ Store not found in any storage location');
+  }
+
+  return foundStore || null;
 };
 
 export const getStoreById = (storeId: string): Store | null => {
@@ -646,7 +730,7 @@ export const initializeSampleData = (storeId: string) => {
   
   // Sample categories
   const categories = [
-    { name: 'الإلكترونيات', description: 'أجهزة إلكترونية وتقنية', sort: 1 },
+    { name: 'الإلكترونيا��', description: 'أجهزة ��لكترونية وتقنية', sort: 1 },
     { name: 'الأزياء', description: 'ملابس وأحذية وإكسسوارات', sort: 2 },
     { name: 'المن��ل والحديقة', description: 'أدوات منزلية وديكور', sort: 3 },
     { name: 'الكتب', description: 'كتب ومراجع علمية', sort: 4 }

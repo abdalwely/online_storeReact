@@ -10,10 +10,14 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   getStores,
+  getStoreById,
   getProducts,
-  getCategories,
   Store,
-  Product,
+  Product
+} from '@/lib/firebase-store-management';
+import {
+  getStoreBySubdomain,
+  getCategories,
   Category
 } from '@/lib/store-management';
 import { storeSyncManager, waitForStoreData } from '@/lib/store-sync';
@@ -118,7 +122,7 @@ export default function AdvancedStorefront() {
     loadStoreData();
   }, [subdomain]);
 
-  // إع��دة تحميل البيا��ات عند تحميل بيانات المستخدم
+  // إع��د�� تحميل البيا��ات عند ��حميل بيانات المستخدم
   useEffect(() => {
     if (userData?.uid) {
       console.log('🔄 User data loaded, checking if reload needed...');
@@ -169,7 +173,7 @@ export default function AdvancedStorefront() {
       }, 500); // تأخير 500ms لتجنب التحديثات المتكررة
     };
 
-    // Listen for customization updates
+    // Listen for customization updates and store creation
     const handleCustomizationUpdate = (e: MessageEvent) => {
       // استخدام subdomain بدلاً من store.id لتجنب dependency
       if (e.data.type === 'STORE_CUSTOMIZATION_UPDATED') {
@@ -182,12 +186,59 @@ export default function AdvancedStorefront() {
         console.log('📦 New product created, reloading products...');
         debouncedReload();
       }
+
+      // Listen for new store creation
+      if (e.data.type === 'STORE_CREATED') {
+        console.log('🏪 New store created, reloading to find it...', e.data);
+        // تأخير قصير للسماح للبيانات بالحفظ
+        setTimeout(() => {
+          debouncedReload();
+        }, 100);
+      }
+
+      // Handle immediate store creation for previews
+      if (e.data.type === 'STORE_CREATED_IMMEDIATE') {
+        console.log('🚀 Immediate store creation detected:', e.data.store.subdomain);
+        if (e.data.store.subdomain === subdomain) {
+          console.log('✅ This is the store we are looking for!');
+          setStore(e.data.store);
+          loadStoreProducts(e.data.store.id);
+        }
+      }
+
+      // Handle immediate store data for preview mode
+      if (e.data.type === 'STORE_DATA_FOR_PREVIEW') {
+        console.log('📦 Received immediate store data for preview:', e.data.store.subdomain);
+        console.log('📦 Store list received:', e.data.storeList.length, 'stores');
+
+        // Save the data immediately
+        if (e.data.storeList && e.data.storeList.length > 0) {
+          const storeListJson = JSON.stringify(e.data.storeList);
+          localStorage.setItem('stores', storeListJson);
+          sessionStorage.setItem('stores', storeListJson);
+
+          // Save individual store
+          if (e.data.store) {
+            localStorage.setItem(`store_${e.data.store.subdomain}`, JSON.stringify(e.data.store));
+            sessionStorage.setItem(`store_${e.data.store.subdomain}`, JSON.stringify(e.data.store));
+          }
+
+          console.log('💾 Immediate store data saved to storage');
+        }
+
+        // If this is the store we're looking for, set it immediately
+        if (e.data.store && e.data.store.subdomain === subdomain) {
+          console.log('✅ Found matching store for preview!');
+          setStore(e.data.store);
+          loadStoreProducts(e.data.store.id);
+        }
+      }
     };
 
     const handleStorageUpdate = (e: StorageEvent) => {
       if (e.key === 'store_customization_sync' && e.newValue) {
         try {
-          console.log('🎨 Store customization sync detected, reloading...');
+          console.log('�� Store customization sync detected, reloading...');
           debouncedReload();
         } catch (error) {
           console.error('Error parsing customization sync data:', error);
@@ -200,6 +251,28 @@ export default function AdvancedStorefront() {
           debouncedReload();
         } catch (error) {
           console.error('Error parsing product creation sync data:', error);
+        }
+      }
+
+      if (e.key === 'store_creation_trigger' && e.newValue) {
+        try {
+          console.log('🏪 Store creation trigger detected, reloading stores...');
+          const triggerData = JSON.parse(e.newValue);
+          console.log('🏪 Store creation details:', triggerData);
+          setTimeout(() => {
+            debouncedReload();
+          }, 100);
+        } catch (error) {
+          console.error('Error parsing store creation trigger data:', error);
+        }
+      }
+
+      if (e.key === 'stores' && e.newValue) {
+        try {
+          console.log('📦 Stores data updated in localStorage, reloading...');
+          debouncedReload();
+        } catch (error) {
+          console.error('Error handling stores update:', error);
         }
       }
     };
@@ -233,12 +306,42 @@ export default function AdvancedStorefront() {
       console.log('🔍 Auth context loaded:', !!userData);
       console.log('🔍 === End Debug Info ===');
 
-      let stores = storeSyncManager.getStoresWithFallback();
+      // Comprehensive storage check first
+      console.log('🔍 === COMPREHENSIVE STORAGE CHECK ===');
+      console.log('📦 localStorage stores:', localStorage.getItem('stores') ? JSON.parse(localStorage.getItem('stores')!).length : 'null');
+      console.log('📦 sessionStorage stores:', sessionStorage.getItem('stores') ? JSON.parse(sessionStorage.getItem('stores')!).length : 'null');
+      console.log('📦 Individual store in localStorage:', localStorage.getItem(`store_${subdomain}`) ? 'EXISTS' : 'NOT FOUND');
+      console.log('📦 Individual store in sessionStorage:', sessionStorage.getItem(`store_${subdomain}`) ? 'EXISTS' : 'NOT FOUND');
+
+      // Try fast subdomain lookup first
+      console.log('🚀 Attempting fast subdomain lookup for:', subdomain);
+      const fastFoundStore = getStoreBySubdomain(subdomain);
+      if (fastFoundStore) {
+        console.log('✅ Fast lookup successful:', fastFoundStore.name);
+        setStore(fastFoundStore);
+        await loadStoreProducts(fastFoundStore.id);
+        return;
+      }
+
+      let stores = await getStores();
 
       console.log('📦 Available stores:', stores.map(s => ({ name: s.name, subdomain: s.subdomain, id: s.id, ownerId: s.ownerId })));
-      console.log('🔍 Looking for store ID:', subdomain);
+      console.log('🔍 Looking for store ID/subdomain:', subdomain);
       console.log('🔍 Is preview mode:', isPreviewMode);
       console.log('🔍 Total stores found:', stores.length);
+      console.log('🔍 Preview store ID from URL:', previewStoreId);
+      console.log('🔍 Preview owner ID from URL:', previewOwnerId);
+
+      // إضافة تفاصيل أكثر للتشخيص
+      if (stores.length === 0) {
+        console.log('⚠️ No stores found, checking localStorage directly...');
+        const rawStores = localStorage.getItem('stores');
+        console.log('📦 Raw localStorage stores:', rawStores ? JSON.parse(rawStores).length : 'null');
+
+        // محاولة قراءة البيانات من sessionStorage أيضاً
+        const sessionStores = sessionStorage.getItem('stores');
+        console.log('📦 SessionStorage stores:', sessionStores ? JSON.parse(sessionStores).length : 'null');
+      }
 
       // طباعة تفاصيل كل متجر للمقارنة
       stores.forEach((store, index) => {
@@ -253,9 +356,9 @@ export default function AdvancedStorefront() {
       });
 
       if (stores.length === 0) {
-        console.log('⏳ No stores found, trying direct localStorage access...');
+        console.log('⏳ No stores found, trying multiple recovery methods...');
 
-        // محاولة قراءة البيانات مباشرة من localStorage
+        // الطريقة 1: محاولة قراءة البيانات مباشرة من localStorage
         try {
           const directStores = localStorage.getItem('stores');
           if (directStores) {
@@ -266,24 +369,54 @@ export default function AdvancedStorefront() {
                 createdAt: new Date(store.createdAt),
                 updatedAt: new Date(store.updatedAt)
               }));
-              console.log('📦 Loaded stores directly from localStorage:', stores.length);
+              console.log('📦 Method 1 - Loaded stores directly from localStorage:', stores.length);
             }
           }
         } catch (error) {
           console.error('Error reading stores from localStorage:', error);
         }
 
-        // إذا لم نجد بيانات، انتظر
+        // الطريقة 2: محاولة قراءة من sessionStorage
         if (stores.length === 0) {
-          console.log('⏳ Still no stores found, waiting for data...');
+          try {
+            const sessionStores = sessionStorage.getItem('stores');
+            if (sessionStores) {
+              const parsedStores = JSON.parse(sessionStores);
+              if (Array.isArray(parsedStores) && parsedStores.length > 0) {
+                stores = parsedStores.map((store: any) => ({
+                  ...store,
+                  createdAt: new Date(store.createdAt),
+                  updatedAt: new Date(store.updatedAt)
+                }));
+                console.log('📦 Method 2 - Loaded stores from sessionStorage:', stores.length);
+                // نسخ البيانات إلى localStorage
+                localStorage.setItem('stores', JSON.stringify(stores));
+              }
+            }
+          } catch (error) {
+            console.error('Error reading stores from sessionStorage:', error);
+          }
+        }
+
+        // الطريقة 3: انتظار البيانات من النافذة الأصلية
+        if (stores.length === 0) {
+          console.log('⏳ Method 3 - Still no stores found, waiting for data...');
           stores = await waitForStoreData(subdomain, 5000);
           console.log('📦 Stores after waiting:', stores.map(s => ({ name: s.name, subdomain: s.subdomain, id: s.id })));
+        }
+
+        // الطريقة 4: إعادة استدعاء getStores مباشرة من store-management
+        if (stores.length === 0) {
+          console.log('⏳ Method 4 - Trying direct getStores call...');
+          const { getStores } = await import('@/lib/store-management');
+          stores = getStores();
+          console.log('📦 Direct getStores result:', stores.length);
         }
       }
 
       let foundStore: Store | undefined;
 
-      // في المعاينة، نستخدم منطق بحث ذكي يعطي أولوية للتاجر الحالي
+      // في المعاينة، نستخدم من��ق بحث ذكي يعطي أولوية للتاجر الحالي
       if (isPreviewMode) {
         console.log('🔍 Preview mode: Smart store lookup with user priority');
         console.log('🔍 Requested store ID:', subdomain);
@@ -360,7 +493,7 @@ export default function AdvancedStorefront() {
           }
         }
 
-        // خامساً: كحل أخير إذا يوجد متجر واحد فقط، استخدمه (مفيد في التطوير)
+        // خامساً: كحل أخير إذا يوجد متجر واح�� ��قط، استخدمه (مفيد في التطوير)
         if (!foundStore && stores.length === 1) {
           foundStore = stores[0];
           console.log('🔧 Preview mode: Using the only available store:', foundStore.name);
@@ -388,19 +521,63 @@ export default function AdvancedStorefront() {
           })));
         }
       } else {
-        // البحث بالـ subdomain أولاً (للوضع العادي)
-        foundStore = stores.find(s => s.subdomain === subdomain);
+        // للوضع العادي (غير المعاينة): بحث شامل
+        console.log('🔍 Normal mode: Comprehensive store lookup');
 
-        // إذا لم يتم العثور على المتجر، جرب البحث بالـ ID (دقيق)
+        // الطريقة 1: البحث بالـ subdomain أولاً
+        foundStore = stores.find(s => s.subdomain === subdomain);
+        if (foundStore) {
+          console.log('✅ Found store by subdomain match:', foundStore.name);
+        }
+
+        // الطريقة 2: البحث بالـ ID
         if (!foundStore) {
           foundStore = stores.find(s => s.id === subdomain);
           if (foundStore) {
-            console.log('🔍 Found store by exact ID match:', foundStore.name);
+            console.log('��� Found store by exact ID match:', foundStore.name);
+          }
+        }
+
+        // ا��طريقة 3: البحث الجزئي بـ ID
+        if (!foundStore) {
+          foundStore = stores.find(s =>
+            s.id.includes(subdomain) || subdomain.includes(s.id)
+          );
+          if (foundStore) {
+            console.log('✅ Found store by partial ID match:', foundStore.name);
+          }
+        }
+
+        // الطريقة 4: البحث الجزئي بـ subdomain
+        if (!foundStore) {
+          foundStore = stores.find(s =>
+            s.subdomain.includes(subdomain) || subdomain.includes(s.subdomain)
+          );
+          if (foundStore) {
+            console.log('✅ Found store by partial subdomain match:', foundStore.name);
           }
         }
       }
 
-      // إذا لم يتم العثور عليه في وضع المعاينة، جرب البحث الجزئي كحل أخير
+      // البحث باستخدام storeId من URL parameters إذا توفر
+      if (!foundStore && previewStoreId) {
+        console.log('🔍 Trying to find store using previewStoreId:', previewStoreId);
+        foundStore = stores.find(s => s.id === previewStoreId);
+        if (foundStore) {
+          console.log('✅ Found store by previewStoreId:', foundStore.name);
+        }
+      }
+
+      // البحث باستخدام ownerId من URL parameters إذا توفر
+      if (!foundStore && previewOwnerId) {
+        console.log('🔍 Trying to find store using previewOwnerId:', previewOwnerId);
+        foundStore = stores.find(s => s.ownerId === previewOwnerId);
+        if (foundStore) {
+          console.log('✅ Found store by previewOwnerId:', foundStore.name);
+        }
+      }
+
+      // إذا لم يتم العثور عليه، جرب البحث الجزئي كحل أخير
       if (!foundStore && subdomain) {
         // في وضع المعاينة، نحاول البحث الجزئي كحل أخير
         foundStore = stores.find(s =>
@@ -417,10 +594,10 @@ export default function AdvancedStorefront() {
         }
       }
 
-      // في المعاينة، ��ا نستخدم متجر تاجر آخر أبداً - يجب أن يكون المتجر للتاجر الصحيح فقط
+      // في المعاينة، ��ا نستخدم متجر تاجر آخر أبداً - ��جب أن يكون المتجر للتاجر الصحيح فقط
       if (!foundStore && stores.length === 1 && !isPreviewMode) {
         foundStore = stores[0];
-        console.log('🔧 Only one store available, using it:', foundStore.name);
+        console.log('���� Only one store available, using it:', foundStore.name);
         console.log('🔧 Store details:', { id: foundStore.id, ownerId: foundStore.ownerId });
       } else if (!foundStore && stores.length >= 1 && isPreviewMode) {
         console.log('⚠️ Preview mode: Trying final fallback approach...');
@@ -449,7 +626,13 @@ export default function AdvancedStorefront() {
           name: s.name,
           subdomain: s.subdomain,
           id: s.id,
-          ownerId: s.ownerId
+          ownerId: s.ownerId,
+          match: {
+            exactSubdomain: s.subdomain === subdomain,
+            exactId: s.id === subdomain,
+            partialSubdomain: s.subdomain.includes(subdomain) || subdomain.includes(s.subdomain),
+            partialId: s.id.includes(subdomain) || subdomain.includes(s.id)
+          }
         })));
 
         if (isPreviewMode) {
@@ -457,6 +640,74 @@ export default function AdvancedStorefront() {
           console.error('❌ User ID:', userData?.uid || 'undefined (normal in preview)');
           console.error('❌ Requested store ID:', subdomain);
           console.error('💡 This usually means the store ID doesn\'t match any available stores');
+
+          // Fallback: Try to create a minimal store for preview if we have customization data
+          const urlParams = new URLSearchParams(window.location.search);
+          const previewStoreId = urlParams.get('storeId');
+          const previewOwnerId = urlParams.get('ownerId');
+          const customizationParam = urlParams.get('customization');
+
+          if (previewStoreId && previewOwnerId && customizationParam) {
+            console.log('🔧 Attempting to create fallback store from URL params...');
+            try {
+              const customizationData = JSON.parse(decodeURIComponent(customizationParam));
+
+              // Create a minimal store for preview
+              const fallbackStore: Store = {
+                id: previewStoreId,
+                name: 'متجر المعاينة',
+                description: 'متجر مؤقت للمعاينة',
+                subdomain: subdomain,
+                ownerId: previewOwnerId,
+                template: 'modern',
+                customization: customizationData,
+                settings: {
+                  currency: 'SAR',
+                  language: 'ar',
+                  timezone: 'Asia/Riyadh',
+                  shipping: {
+                    enabled: true,
+                    freeShippingThreshold: 200,
+                    defaultCost: 25,
+                    zones: []
+                  },
+                  payment: {
+                    cashOnDelivery: true,
+                    bankTransfer: false,
+                    creditCard: false,
+                    paypal: false,
+                    stripe: false
+                  },
+                  taxes: {
+                    enabled: false,
+                    rate: 0,
+                    includeInPrice: false
+                  },
+                  notifications: {
+                    emailNotifications: false,
+                    smsNotifications: false,
+                    pushNotifications: false
+                  }
+                },
+                status: 'active',
+                createdAt: new Date(),
+                updatedAt: new Date()
+              };
+
+              console.log('✅ Created fallback store for preview:', fallbackStore.name);
+
+              // Save the fallback store
+              localStorage.setItem(`store_${subdomain}`, JSON.stringify(fallbackStore));
+              sessionStorage.setItem(`store_${subdomain}`, JSON.stringify(fallbackStore));
+
+              setStore(fallbackStore);
+              await loadStoreProducts(fallbackStore.id);
+              return;
+
+            } catch (error) {
+              console.error('Error creating fallback store:', error);
+            }
+          }
 
           // محاولة إعادة تحميل البيانات من المصدر الأساسي
           const allStores = getStores();
@@ -472,7 +723,7 @@ export default function AdvancedStorefront() {
             let storeByExactId = allStores.find(s => s.id === subdomain);
             if (storeByExactId) {
               foundStore = storeByExactId;
-              console.log('✅ Direct lookup: Found by exact ID:', foundStore.name);
+              console.log('��� Direct lookup: Found by exact ID:', foundStore.name);
             }
             // البحث الجزئي
             else {
@@ -528,9 +779,9 @@ export default function AdvancedStorefront() {
               }
             }
           }
-          // محاولة العثور على متجر بـ ownerId بدلاً من ID (في حالة تم إنشاء متجر جديد)
+          // محاولة العثور عل�� متجر بـ ownerId بدلاً من ID (في حالة تم إنشاء متجر جديد)
           else if (allStores.length > 1 && !isPreviewMode) {
-            // جرب العثور على أي متجر يحتوي على جزء من الـ ID المطلوب
+            // جرب العثور على أي متجر يحتوي على جزء من الـ ID المط��وب
             const partialMatch = allStores.find(s =>
               subdomain.includes(s.id.slice(-8)) ||
               s.id.includes(subdomain.slice(-8))
@@ -546,14 +797,14 @@ export default function AdvancedStorefront() {
           console.error('❌ Store ID mismatch - this indicates a sync issue between components');
         }
 
-        // إذا لم نجد متجر حتى بعد كل المحاولا��
+        // إذا لم نجد متجر حتى بعد كل ال��حاولا��
         if (!foundStore) {
           setLoading(false);
           return;
         }
       }
 
-      // تطبيق تخصيصات المع��ينة إذا توفرت (الألوان والتخصيصات فقط، ليس اسم المتجر)
+      // تطبيق تخص��صات المع��ينة إذا توفرت (الألوان والتخصيصات فقط، ليس اسم المتجر)
       if (isPreviewMode && previewCustomization) {
         try {
           const customization = JSON.parse(decodeURIComponent(previewCustomization));
@@ -573,13 +824,26 @@ export default function AdvancedStorefront() {
 
       setStore(foundStore);
 
-      const storeProducts = getProducts(foundStore.id);
-      const storeCategories = getCategories(foundStore.id);
+      let storeProducts: Product[] = [];
+      let storeCategories: Category[] = [];
+
+      try {
+        storeProducts = await getProducts(foundStore.id);
+        storeCategories = getCategories(foundStore.id);
+
+        // Ensure we have arrays
+        storeProducts = Array.isArray(storeProducts) ? storeProducts : [];
+        storeCategories = Array.isArray(storeCategories) ? storeCategories : [];
+      } catch (error) {
+        console.error('❌ Error loading store products/categories:', error);
+        storeProducts = [];
+        storeCategories = [];
+      }
 
       setProducts(storeProducts);
       setCategories(storeCategories);
 
-      console.log('✅ Advanced Storefront loaded successfully:', {
+      console.log('��� Advanced Storefront loaded successfully:', {
         store: foundStore.name,
         storeId: foundStore.id,
         ownerId: foundStore.ownerId,
@@ -618,7 +882,7 @@ export default function AdvancedStorefront() {
     });
     
     toast({
-      title: 'تم إضافة المنتج للسلة',
+      title: 'تم إض��فة المنتج للسلة',
       description: 'يمكنك مراجعة سلة التسوق الآن'
     });
   };
@@ -632,7 +896,7 @@ export default function AdvancedStorefront() {
       
       toast({
         title: isInWishlist ? 'تم حذف المنتج من المفضلة' : 'تم إضافة المنتج للمفضلة',
-        description: isInWishlist ? 'تم حذف الم��تج من قائمة ال��فضلة' : 'تم إضافة المنتج لقائمة المفضلة'
+        description: isInWishlist ? 'تم حذف الم���ت�� من قائمة ال��فضلة' : 'تم إضافة المنتج ل��ائمة المفضلة'
       });
       
       return newWishlist;
@@ -690,13 +954,32 @@ export default function AdvancedStorefront() {
 
   const getCartTotal = () => {
     return cart.reduce((total, item) => {
-      const product = products.find(p => p.id === item.productId);
+      const product = Array.isArray(products) ? products.find(p => p.id === item.productId) : null;
       return total + (product ? product.price * item.quantity : 0);
     }, 0);
   };
 
   const getCartItemsCount = () => {
     return cart.reduce((total, item) => total + item.quantity, 0);
+  };
+
+  const loadStoreProducts = async (storeId: string) => {
+    try {
+      console.log('📦 Loading products for store:', storeId);
+      const storeProducts = await getProducts(storeId);
+      const storeCategories = getCategories(storeId);
+
+      // Ensure products is always an array
+      setProducts(Array.isArray(storeProducts) ? storeProducts : []);
+      setCategories(Array.isArray(storeCategories) ? storeCategories : []);
+
+      console.log('✅ Products loaded:', storeProducts.length);
+      console.log('✅ Categories loaded:', storeCategories.length);
+    } catch (error) {
+      console.error('❌ Error loading store products:', error);
+      setProducts([]);
+      setCategories([]);
+    }
   };
 
   if (loading) {
@@ -718,18 +1001,35 @@ export default function AdvancedStorefront() {
           <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
             <ShoppingBag className="h-12 w-12 text-gray-400" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-4">المتجر غير متوفر</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-4">المتجر غير م��وفر</h1>
           <p className="text-gray-600 mb-6">
             ل�� يتم العثور على متجر بالرابط: <strong>{subdomain}</strong>
           </p>
 
           <div className="space-y-4 mb-6">
             <Button
-              onClick={() => loadStoreData()}
+              onClick={() => {
+                console.log('🔄 Manual reload requested for store:', subdomain);
+                loadStoreData();
+              }}
               className="w-full bg-blue-600 hover:bg-blue-700"
               disabled={loading}
             >
               {loading ? 'جاري إعادة المحاولة...' : 'إعادة المحاولة'}
+            </Button>
+
+            <Button
+              onClick={() => {
+                console.log('🔍 Checking localStorage for debugging...');
+                const stores = localStorage.getItem('stores');
+                const apps = localStorage.getItem('storeApplications');
+                console.log('📦 Local stores:', stores ? JSON.parse(stores) : 'none');
+                console.log('📦 Local applications:', apps ? JSON.parse(apps) : 'none');
+              }}
+              variant="outline"
+              className="w-full"
+            >
+              فحص البيانات ال��حلية
             </Button>
 
             <Button
@@ -756,7 +1056,7 @@ export default function AdvancedStorefront() {
             <div className="mt-2 text-xs">
               <p><strong>خطوات الحل:</strong></p>
               <ol className="list-decimal list-inside space-y-1 mt-1">
-                <li>اذهب لصفحة التشخيص واضغط "إصلاح مشكلة التزامن"</li>
+                <li>اذ��ب لصفحة التشخيص واضغط "إصلاح مشكلة التزامن"</li>
                 <li>تأكد من ت��جيل دخول التاجر بشكل صحيح</li>
                 <li>تحقق من وحدة التحكم (F12) لتفاصيل أكثر</li>
               </ol>
@@ -859,10 +1159,10 @@ export default function AdvancedStorefront() {
             onAddToCart={addToCart}
             onToggleWishlist={toggleWishlist}
             isInWishlist={wishlist.includes(selectedProduct.id)}
-            relatedProducts={products.filter(p => 
-              p.category === selectedProduct.category && 
+            relatedProducts={Array.isArray(products) ? products.filter(p => 
+              p.category === selectedProduct.category &&
               p.id !== selectedProduct.id
-            ).slice(0, 4)}
+            ).slice(0, 4) : []}
           />
         )}
 
@@ -962,7 +1262,7 @@ const Header = ({ store, searchQuery, setSearchQuery, cart, wishlist, categories
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
             <Truck className="h-4 w-4" />
-            <span>شحن مجاني للطلبات فوق {store.settings.shipping.freeShippingThreshold} ر.س</span>
+            <span>شحن مجان�� للطلبات فوق {store.settings.shipping.freeShippingThreshold} ر.س</span>
           </div>
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
@@ -970,7 +1270,7 @@ const Header = ({ store, searchQuery, setSearchQuery, cart, wishlist, categories
           </div>
           <div className="flex items-center gap-2">
             <RotateCcw className="h-4 w-4" />
-            <span>إرجاع مجاني خلال 14 يو��</span>
+            <span>إرجاع مجان�� خلال 14 يو��</span>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -1205,7 +1505,7 @@ const Homepage = ({ store, products, categories, onCategorySelect, onProductSele
               className="border-white text-white hover:bg-white hover:text-gray-900 transition-all duration-300 text-lg px-8 py-4"
             >
               <Eye className="h-5 w-5 mr-2" />
-              شاهد المجموعات
+              شاهد ال��جموعات
             </Button>
           </div>
         </div>
@@ -1234,7 +1534,7 @@ const Homepage = ({ store, products, categories, onCategorySelect, onProductSele
         <div className="text-center mb-8">
           <h2 className="text-3xl font-bold mb-4">تسوق حسب الفئة</h2>
           <p className="text-gray-600 max-w-2xl mx-auto">
-            اكتشف مجموع��نا المتنوعة من المنتجات المصنفة خصيصاً لتلبية احتياجاتك
+            اكتشف مجموع��نا المتنوعة من المنتجات المصنفة خصيصاً لتلبية اح��يا��اتك
           </p>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
@@ -1271,13 +1571,13 @@ const Homepage = ({ store, products, categories, onCategorySelect, onProductSele
       <div className="text-center mb-8">
         <h2 className="text-3xl font-bold mb-4">المنتجات المميزة</h2>
         <p className="text-gray-600 max-w-2xl mx-auto">
-          اختيارنا الخاص ��ن أفضل المنتجات التي تلقى إعجاب عملائنا
+          اختيارنا الخاص ����ن أفضل المنتجات التي تلقى إ��جاب عملا��نا
         </p>
       </div>
       
-      {products.filter(p => p.featured && p.status === 'active').length > 0 ? (
+      {Array.isArray(products) && products.filter(p => p.featured && p.status === 'active').length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-          {products.filter(p => p.featured && p.status === 'active').slice(0, 8).map(product => (
+          {Array.isArray(products) && products.filter(p => p.featured && p.status === 'active').slice(0, 8).map(product => (
             <ProductCard
               key={product.id}
               product={product}
@@ -1293,7 +1593,7 @@ const Homepage = ({ store, products, categories, onCategorySelect, onProductSele
         <div className="text-center py-12">
           <Package className="h-16 w-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">لا توجد منتجات مميزة</h3>
-          <p className="text-gray-600 mb-4">سيتم عرض المنتجات المميزة هنا قريباً</p>
+          <p className="text-gray-600 mb-4">س��تم عرض المنتجات المميزة هنا قريباً</p>
           <Button onClick={() => setCurrentPage('products')}>
             تصفح جميع المنتجات
           </Button>
@@ -1312,7 +1612,7 @@ const Homepage = ({ store, products, categories, onCategorySelect, onProductSele
             className="text-4xl font-bold mb-2"
             style={{ color: store?.customization.colors.primary || '#2563eb' }}
           >
-            {products.filter(p => p.status === 'active').length}+
+            {Array.isArray(products) ? products.filter(p => p.status === 'active').length : 0}+
           </div>
           <div className="text-gray-600">منتج متوفر</div>
         </div>
@@ -1463,7 +1763,7 @@ const ProductsPage = ({ products, categories, filters, setFilters, viewMode, set
     <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
       <div>
         <h1 className="text-3xl font-bold mb-2">جميع المنتجات</h1>
-        <p className="text-gray-600">عدد المنتجات: {products.length}</p>
+        <p className="text-gray-600">عدد ��لمنتجات: {Array.isArray(products) ? products.length : 0}</p>
       </div>
       
       <div className="flex items-center gap-4">
@@ -1517,7 +1817,7 @@ const ProductsPage = ({ products, categories, filters, setFilters, viewMode, set
                     checked={filters.category === 'all'}
                     onChange={() => setFilters({ ...filters, category: 'all' })}
                   />
-                  <span>جميع الفئات</span>
+                  <span>جم��ع الفئات</span>
                 </label>
                 {categories.map((category: Category) => (
                   <label key={category.id} className="flex items-center gap-2">
@@ -1535,7 +1835,7 @@ const ProductsPage = ({ products, categories, filters, setFilters, viewMode, set
 
             {/* Price Range */}
             <div>
-              <h3 className="font-semibold mb-3">نطاق السعر</h3>
+              <h3 className="font-semibold mb-3">نطاق الس��ر</h3>
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <Input
@@ -1607,7 +1907,7 @@ const ProductsPage = ({ products, categories, filters, setFilters, viewMode, set
 
       {/* Products Grid/List */}
       <div className="flex-1">
-        {products.length === 0 ? (
+        {!Array.isArray(products) || products.length === 0 ? (
           <div className="text-center py-12">
             <Package className="h-16 w-16 text-gray-300 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">لا توجد منتجات</h3>
@@ -1619,7 +1919,7 @@ const ProductsPage = ({ products, categories, filters, setFilters, viewMode, set
               ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6'
               : 'space-y-4'
           }>
-            {products.map((product: Product) => (
+            {Array.isArray(products) && products.map((product: Product) => (
               viewMode === 'grid' ? (
                 <ProductCard
                   key={product.id}
@@ -1691,7 +1991,7 @@ const ProductListItem = ({ product, onSelect, onAddToCart, onToggleWishlist, isI
                 />
               ))}
             </div>
-            <span className="text-sm text-gray-600">({product.reviewCount} تقييم)</span>
+            <span className="text-sm text-gray-600">({product.reviewCount} ��قييم)</span>
             <Badge variant="outline">{product.category}</Badge>
           </div>
           
@@ -1777,7 +2077,7 @@ const ProductPage = ({ product, store, onBack, onAddToCart, onToggleWishlist, is
                 />
               ))}
             </div>
-            <span className="text-sm text-gray-600">({product.reviewCount} تقييم)</span>
+            <span className="text-sm text-gray-600">({product.reviewCount} تق��يم)</span>
             <Badge>{product.category}</Badge>
           </div>
           
@@ -1822,7 +2122,7 @@ const ProductPage = ({ product, store, onBack, onAddToCart, onToggleWishlist, is
         {/* Product Specifications */}
         {Object.keys(product.specifications).length > 0 && (
           <div className="mb-6">
-            <h3 className="font-semibold text-lg mb-3">المواصفات</h3>
+            <h3 className="font-semibold text-lg mb-3">ال��واصفات</h3>
             <div className="bg-gray-50 rounded-lg p-4 space-y-2">
               {Object.entries(product.specifications).map(([key, value]) => (
                 <div key={key} className="flex justify-between">
@@ -1848,7 +2148,7 @@ const ProductPage = ({ product, store, onBack, onAddToCart, onToggleWishlist, is
               }}
             >
               <ShoppingCart className="h-5 w-5 mr-2" />
-              أضف للسلة
+              أضف ����لسلة
             </Button>
             
             <Button 
@@ -1911,7 +2211,7 @@ const ProductPage = ({ product, store, onBack, onAddToCart, onToggleWishlist, is
 const CartPage = ({ cart, products, store, onUpdateQuantity, onProceedToCheckout }: any) => {
   const getCartTotal = () => {
     return cart.reduce((total: number, item: CartItem) => {
-      const product = products.find((p: Product) => p.id === item.productId);
+      const product = Array.isArray(products) ? products.find((p: Product) => p.id === item.productId) : null;
       return total + (product ? product.price * item.quantity : 0);
     }, 0);
   };
@@ -1952,7 +2252,7 @@ const CartPage = ({ cart, products, store, onUpdateQuantity, onProceedToCheckout
         {/* Cart Items */}
         <div className="lg:col-span-2 space-y-4">
           {cart.map((item: CartItem) => {
-            const product = products.find((p: Product) => p.id === item.productId);
+            const product = Array.isArray(products) ? products.find((p: Product) => p.id === item.productId) : null;
             if (!product) return null;
             
             return (
@@ -2186,7 +2486,7 @@ const Footer = ({ store }: any) => (
           © 2024 {store.name}. جميع الحقوق محفوظة.
         </p>
         <div className="flex items-center gap-6 mt-4 md:mt-0">
-          <span className="text-sm text-gray-500">مدعوم بتقنية </span>
+          <span className="text-sm text-gray-500">مد��وم بتقنية </span>
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4 text-green-600" />
             <span className="text-sm">دفع آم��</span>

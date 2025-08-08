@@ -1,4 +1,5 @@
 // Store approval system for managing merchant applications
+import { generateValidSubdomain } from './subdomain-utils';
 
 export interface StoreApplication {
   id: string;
@@ -49,11 +50,19 @@ export const submitStoreApplication = async (
   };
 
   applications.push(application);
-  
+
   // Store in localStorage for persistence in development
   localStorage.setItem('storeApplications', JSON.stringify(applications));
-  
+
+  // إشعار التبويبات الأخرى بوجود طلب جديد
+  window.postMessage({
+    type: 'STORE_APPLICATION_SUBMITTED',
+    application: application,
+    timestamp: Date.now()
+  }, '*');
+
   console.log('✅ Store application submitted:', application);
+  console.log('📡 Notified other tabs about new application');
   return application.id;
 };
 
@@ -147,17 +156,23 @@ export const approveStoreApplication = async (
 
   localStorage.setItem('storeApplications', JSON.stringify(applications));
 
+  // إشعار التبويبات الأخرى بالموافقة على الطلب
+  window.postMessage({
+    type: 'STORE_APPLICATION_APPROVED',
+    applicationId: applicationId,
+    timestamp: Date.now()
+  }, '*');
+
   // إنشاء المتجر الفعلي في نظام إدارة المتاجر
   try {
     const { createStore } = await import('./store-management');
 
     const application = applications[appIndex];
-    const subdomain = application.storeConfig.customization.storeName
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      || `store-${Date.now()}`;
+    // تحويل اسم المتجر العربي إلى subdomain صالح
+    const subdomain = generateValidSubdomain(
+      application.storeConfig.customization.storeName,
+      `store-${Date.now()}`
+    );
 
     const newStore = createStore({
       name: application.storeConfig.customization.storeName || application.merchantData.businessName,
@@ -304,11 +319,18 @@ export const rejectStoreApplication = async (
   };
 
   localStorage.setItem('storeApplications', JSON.stringify(applications));
-  
+
+  // إشعار التبويبات الأخرى برفض الطلب
+  window.postMessage({
+    type: 'STORE_APPLICATION_REJECTED',
+    applicationId: applicationId,
+    timestamp: Date.now()
+  }, '*');
+
   // Here you would typically:
   // 1. Send rejection email with reason
   // 2. Log the rejection for audit
-  
+
   console.log('❌ Store application rejected:', applications[appIndex]);
   return true;
 };
@@ -323,12 +345,15 @@ export const getApplicationStats = () => {
     }
   }
 
-  return {
-    total: applications.length,
-    pending: applications.filter(app => app.status === 'pending').length,
-    approved: applications.filter(app => app.status === 'approved').length,
-    rejected: applications.filter(app => app.status === 'rejected').length
+  const stats = {
+    totalApplications: applications.length,
+    pendingApplications: applications.filter(app => app.status === 'pending').length,
+    approvedApplications: applications.filter(app => app.status === 'approved').length,
+    rejectedApplications: applications.filter(app => app.status === 'rejected').length
   };
+
+  console.log('📊 Application stats:', stats);
+  return stats;
 };
 
 // Initialize with some sample data for demonstration

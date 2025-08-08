@@ -17,9 +17,11 @@ import {
   updateStore,
   getStores,
   createStore,
-  initializeSampleData,
   Store
-} from '@/lib/store-management';
+} from '@/lib/firebase-store-management';
+import { initializeSampleData } from '@/lib/store-management';
+import { generateValidSubdomain } from '@/lib/subdomain-utils';
+import DatabaseStatus from '@/components/DatabaseStatus';
 import {
   Palette,
   Type,
@@ -105,7 +107,7 @@ export default function AdvancedStoreCustomization() {
       showBrands: false,
       heroImages: [],
       heroTexts: [
-        { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق الآن' }
+        { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق ��لآن' }
       ],
       sectionsOrder: ['hero', 'categories', 'featured', 'stats']
     },
@@ -153,10 +155,49 @@ export default function AdvancedStoreCustomization() {
   }, [userData]);
 
   const loadStoreData = async () => {
-    if (!userData) return;
+    setLoading(true);
+    console.log('🚀 === LOADING STORE DATA FOR CUSTOMIZATION ===');
+    console.log('👤 User data available:', !!userData);
+    console.log('👤 User ID:', userData?.uid);
+
+    if (!userData) {
+      console.log('❌ No user data available, stopping...');
+      return;
+    }
 
     try {
-      const storeData = getStoreByOwnerId(userData.uid);
+      // فحص شامل للمتاج���� الموجودة من Firebase
+      let allStores: any[] = [];
+      try {
+        allStores = await getStores();
+        if (!Array.isArray(allStores)) {
+          console.warn('⚠️ getStores did not return an array, falling back to empty array');
+          allStores = [];
+        }
+      } catch (storesError) {
+        console.error('❌ Error fetching stores:', storesError);
+        allStores = [];
+      }
+      console.log('🔥 Total stores in Firebase:', Array.isArray(allStores) ? allStores.length : 0);
+      if (Array.isArray(allStores)) {
+        console.log('📋 All stores details:', allStores.map(s => ({
+          id: s.id,
+          name: s.name,
+          subdomain: s.subdomain,
+          ownerId: s.ownerId,
+          ownerMatch: s.ownerId === userData.uid ? '✅ MATCH' : '❌ NO MATCH'
+        })));
+      } else {
+        console.log('❌ allStores is not an array:', typeof allStores, allStores);
+      }
+
+      let storeData = null;
+      try {
+        storeData = await getStoreByOwnerId(userData.uid);
+      } catch (storeError) {
+        console.error('❌ Error fetching store by owner:', storeError);
+        storeData = null;
+      }
       console.log('🔍 Looking for store for user:', userData.uid);
       console.log('📦 Found store data:', storeData);
 
@@ -164,6 +205,7 @@ export default function AdvancedStoreCustomization() {
         console.log('✅ Store found:', {
           id: storeData.id,
           name: storeData.name,
+          subdomain: storeData.subdomain,
           ownerId: storeData.ownerId
         });
         setStore(storeData);
@@ -213,7 +255,7 @@ export default function AdvancedStoreCustomization() {
             showBrands: false,
             heroImages: [],
             heroTexts: [
-              { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق ال��ن' }
+              { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل ا��منتجات بأسع��ر مميزة', buttonText: 'تسوق ال��ن' }
             ],
             sectionsOrder: ['hero', 'categories', 'featured', 'stats'],
             ...storeData.customization?.homepage
@@ -249,25 +291,43 @@ export default function AdvancedStoreCustomization() {
       } else {
         console.log('❌ No store found for user, creating a new store...');
 
-        // التحقق من جميع المتاجر المتاحة
-        const allStores = getStores();
-        console.log('📊 All available stores:', allStores.map(s => ({
-          id: s.id,
-          name: s.name,
-          ownerId: s.ownerId
-        })));
+        // ��لتحقق من جميع المتاجر المتاحة
+        let allStoresCheck: any[] = [];
+        try {
+          allStoresCheck = await getStores();
+          if (Array.isArray(allStoresCheck)) {
+            console.log('📊 All available stores:', allStoresCheck.map(s => ({
+              id: s.id,
+              name: s.name,
+              ownerId: s.ownerId
+            })));
+          } else {
+            console.log('📊 All available stores: Not an array');
+          }
+        } catch (error) {
+          console.error('❌ Error checking all stores:', error);
+        }
 
-        // إنشاء متجر جديد للتاجر
+        // إنشاء متجر ��ديد للتاجر فوراً لضمان إمكانية المعاينة
         const merchantName = userData.firstName && userData.firstName !== 'تاجر'
           ? userData.firstName
           : 'التاجر';
 
-        const newStore = createStore({
-          name: `متجر ${merchantName}`,
-          description: `متجر ${merchantName} للتجارة الإلكترونية`,
-          subdomain: `store-${userData.uid.slice(-8)}`,
+        // إنشاء subdomain متسق مع منطق store-approval-system
+        const storeName = `متجر ${merchantName}`;
+        const generatedSubdomain = generateValidSubdomain(
+          storeName,
+          `store-${userData.uid.slice(-8)}`
+        );
+
+        console.log('🔥 Creating actual store in Firebase for merchant immediately...');
+        const newStore = await createStore({
+          name: storeName,
+          description: `${storeName} للتجا��ة الإلكترونية`,
+          subdomain: generatedSubdomain,
           ownerId: userData.uid,
           template: 'modern',
+          status: 'pending',
           customization: {
             colors: {
               primary: '#2563eb',
@@ -308,7 +368,7 @@ export default function AdvancedStoreCustomization() {
               showBrands: false,
               heroImages: [],
               heroTexts: [
-                { title: `مرحباً بكم في متجر ${merchantName}`, subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق الآن' }
+                { title: `مرحباً ��كم في متجر ${merchantName}`, subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق الآن' }
               ],
               sectionsOrder: ['hero', 'categories', 'featured', 'stats']
             },
@@ -369,10 +429,13 @@ export default function AdvancedStoreCustomization() {
         console.log('✅ Created new store for user:', {
           id: newStore.id,
           name: newStore.name,
-          ownerId: newStore.ownerId
+          subdomain: newStore.subdomain,
+          ownerId: newStore.ownerId,
+          originalStoreName: storeName,
+          generatedSubdomain: generatedSubdomain
         });
 
-        // إنشاء بيانات تجريبية للمتجر الجديد
+        // إنشاء بيانات تجريبية ��لمتجر ��لجديد
         try {
           initializeSampleData(newStore.id);
           console.log('✅ Sample data initialized for new store');
@@ -380,18 +443,48 @@ export default function AdvancedStoreCustomization() {
           console.error('❌ Error initializing sample data:', error);
         }
 
-        // تأكد من تزامن البيانات فوراً
-        const updatedStores = getStores();
-        localStorage.setItem('stores', JSON.stringify(updatedStores));
-        sessionStorage.setItem('stores', JSON.stringify(updatedStores));
+        // تأكد من تزامن البيانات فوراً عبر جميع طرق التخزين
+        try {
+          const updatedStores = await getStores();
+          if (Array.isArray(updatedStores)) {
+            localStorage.setItem('stores', JSON.stringify(updatedStores));
+            sessionStorage.setItem('stores', JSON.stringify(updatedStores));
+            console.log('💾 Saved stores to localStorage and sessionStorage:', updatedStores.length);
+          }
+        } catch (error) {
+          console.error('❌ Error syncing stores data:', error);
+        }
+        console.log('🆕 New store details:', {
+          id: newStore.id,
+          subdomain: newStore.subdomain,
+          name: newStore.name,
+          ownerId: newStore.ownerId
+        });
+
+        // إضافة بيانات نموذجية للمتجر الجديد
+        try {
+          console.log('🔧 Initializing sample data for new store...');
+          initializeSampleData(newStore.id);
+          console.log('✅ Sample data initialized successfully');
+        } catch (error) {
+          console.error('❌ Error initializing sample data:', error);
+        }
 
         // إشعار جميع النوافذ بالبيانات الجديدة
         window.postMessage({
           type: 'STORE_CREATED',
           storeId: newStore.id,
+          subdomain: newStore.subdomain,
           ownerId: newStore.ownerId,
           timestamp: Date.now()
         }, '*');
+
+        // إضافة trigger لـ storage event
+        localStorage.setItem('store_creation_trigger', JSON.stringify({
+          storeId: newStore.id,
+          subdomain: newStore.subdomain,
+          timestamp: Date.now()
+        }));
 
         setStore(newStore);
         setCustomization(newStore.customization);
@@ -408,7 +501,7 @@ export default function AdvancedStoreCustomization() {
 
     setSaving(true);
     try {
-      const updatedStore = updateStore(store.id, {
+      const updatedStore = await updateStore(store.id, {
         customization: customization
       });
 
@@ -431,7 +524,7 @@ export default function AdvancedStoreCustomization() {
         }));
 
         // Force sync of stores data to ensure consistency
-        const currentStores = getStores();
+        const currentStores = await getStores();
         localStorage.setItem('stores', JSON.stringify(currentStores));
         sessionStorage.setItem('stores', JSON.stringify(currentStores));
 
@@ -443,7 +536,7 @@ export default function AdvancedStoreCustomization() {
           action: (
             <ToastAction
               altText="افتح المتجر"
-              onClick={() => window.open(`/store/${store.id}?_t=${Date.now()}`, '_blank')}
+              onClick={() => window.open(`/store/${store.subdomain}?_t=${Date.now()}`, '_blank')}
             >
               افتح المتجر
             </ToastAction>
@@ -453,7 +546,7 @@ export default function AdvancedStoreCustomization() {
     } catch (error) {
       console.error('Error saving customization:', error);
       toast({
-        title: 'خطأ في الحفظ',
+        title: 'خطأ في ا��حفظ',
         description: 'حدث خطأ أثناء حفظ التخصيصات',
         variant: 'destructive'
       });
@@ -527,7 +620,7 @@ export default function AdvancedStoreCustomization() {
         showBrands: false,
         heroImages: [],
         heroTexts: [
-          { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق الآن' }
+          { title: 'مرحباً بكم في متجرنا', subtitle: 'أفضل المنتجات بأسعار مميزة', buttonText: 'تسوق ا��آن' }
         ],
         sectionsOrder: ['hero', 'categories', 'featured', 'stats']
       },
@@ -598,6 +691,9 @@ export default function AdvancedStoreCustomization() {
               <div>
                 <h1 className="text-2xl font-bold">تخصيص المتجر</h1>
                 <p className="text-gray-600">{store.name}</p>
+                <div className="mt-2">
+                  <DatabaseStatus />
+                </div>
               </div>
             </div>
             
@@ -632,25 +728,97 @@ export default function AdvancedStoreCustomization() {
               
               <Button
                 variant="outline"
-                onClick={() => {
-                  // تأكد من تزامن البيانات قبل فتح المعاينة
-                  const currentStores = getStores();
-                  localStorage.setItem('stores', JSON.stringify(currentStores));
-                  sessionStorage.setItem('stores', JSON.stringify(currentStores));
+                onClick={async () => {
+                  console.log('🚀 === PREVIEW BUTTON CLICKED ===');
+                  console.log('📋 Current store object:', store);
 
+                  if (!store) {
+                    console.error('❌ No store object available for preview!');
+                    toast({
+                      title: 'خطأ في المعاينة',
+                      description: 'لم يتم العثور على بيانات المتجر. يرجى المحاولة مرة أخرى.',
+                      variant: 'destructive'
+                    });
+                    return;
+                  }
+
+                  // تأكد من تزامن البيانات قبل فتح المعاينة
+                  let currentStores: any[] = [];
+                  try {
+                    currentStores = await getStores();
+                    if (!Array.isArray(currentStores)) {
+                      currentStores = [];
+                    }
+                  } catch (error) {
+                    console.error('❌ Error fetching current stores:', error);
+                    currentStores = [];
+                  }
+                  console.log('��� Current stores before sync:', currentStores.length);
+                  if (Array.isArray(currentStores)) {
+                    console.log('📦 Store details:', currentStores.map(s => ({
+                      id: s.id,
+                      subdomain: s.subdomain,
+                      name: s.name,
+                      ownerId: s.ownerId
+                    })));
+                  }
+
+                  // إذا لم يكن المتجر الحالي موجود في القائمة، أضفه
+                  const storeExists = currentStores.find(s => s.id === store.id);
+                  if (!storeExists) {
+                    console.warn('⚠️ Current store not found in stores list, adding it...');
+                    currentStores.push(store);
+
+                    // أيضاً احفظ المتجر مباشرة في النظام
+                    try {
+                      const { updateStore } = await import('@/lib/store-management');
+                      updateStore(store.id, { customization });
+                      console.log('✅ Store updated in system with latest customization');
+                    } catch (error) {
+                      console.error('Error updating store in system:', error);
+                    }
+                  }
+
+                  // حفظ في كل مكان ممكن
+                  const storesJson = JSON.stringify(currentStores);
+                  localStorage.setItem('stores', storesJson);
+                  sessionStorage.setItem('stores', storesJson);
+
+                  // ��فظ المتجر منفرداً للبحث السريع
+                  localStorage.setItem(`store_${store.subdomain}`, JSON.stringify(store));
+                  sessionStorage.setItem(`store_${store.subdomain}`, JSON.stringify(store));
+
+                  console.log('💾 Data saved to localStorage and sessionStorage');
                   console.log('🔗 Opening preview for store:', {
                     id: store.id,
                     name: store.name,
+                    subdomain: store.subdomain,
                     ownerId: store.ownerId
                   });
 
-                  const previewUrl = `/store/${store.id}?preview=true&storeId=${store.id}&customization=${encodeURIComponent(JSON.stringify(customization))}`;
+                  // تحقق من صحة subdomain
+                  if (!store.subdomain || store.subdomain.length < 3) {
+                    console.error('⚠️ Invalid subdomain detected:', store.subdomain);
+                    toast({
+                      title: 'خطأ في المعاينة',
+                      description: 'رابط المتجر غير صحيح. يرجى المحاولة مرة أخرى.',
+                      variant: 'destructive'
+                    });
+                    return;
+                  }
+
+                  const previewUrl = `/store/${store.subdomain}?preview=true&storeId=${store.id}&ownerId=${store.ownerId}&customization=${encodeURIComponent(JSON.stringify(customization))}`;
                   console.log('🔗 Preview URL:', previewUrl);
-                  console.log('🔗 Store details for preview:', {
-                    id: store.id,
-                    name: store.name,
-                    ownerId: store.ownerId
-                  });
+
+                  // إرسال رسالة فورية للن��فذة الجديدة
+                  window.postMessage({
+                    type: 'STORE_DATA_FOR_PREVIEW',
+                    store: store,
+                    storeList: currentStores,
+                    timestamp: Date.now()
+                  }, '*');
+
+                  console.log('📡 Sent immediate store data message');
 
                   window.open(previewUrl, '_blank');
                 }}
@@ -698,7 +866,7 @@ export default function AdvancedStoreCustomization() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Palette className="h-5 w-5" />
-                      ال��لوان
+                      ا����لوان
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-6">
@@ -842,12 +1010,12 @@ export default function AdvancedStoreCustomization() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Type className="h-5 w-5" />
-                      الخطوط
+                      الخ��وط
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     <div>
-                      <Label>خط ��لعناوين</Label>
+                      <Label>خط ���لعناوين</Label>
                       <Select
                         value={customization.fonts?.heading || 'Cairo'}
                         onValueChange={(value) => setCustomization(prev => ({
@@ -961,9 +1129,9 @@ export default function AdvancedStoreCustomization() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="simple">بسيط</SelectItem>
+                          <SelectItem value="simple">بسي��</SelectItem>
                           <SelectItem value="detailed">مفصل</SelectItem>
-                          <SelectItem value="compact">مضغوط</SelectItem>
+                          <SelectItem value="compact">م��غوط</SelectItem>
                           <SelectItem value="mega">شامل</SelectItem>
                         </SelectContent>
                       </Select>
@@ -1013,7 +1181,7 @@ export default function AdvancedStoreCustomization() {
                     </div>
 
                     <div>
-                      <Label>نصف قطر الحواف</Label>
+                      <Label>نصف ��طر الحواف</Label>
                       <Select 
                         value={customization.layout?.borderRadius || 'medium'} 
                         onValueChange={(value: any) => setCustomization(prev => ({
@@ -1035,7 +1203,7 @@ export default function AdvancedStoreCustomization() {
                     </div>
 
                     <div>
-                      <Label>المسافات</Label>
+                      <Label>المسا��ات</Label>
                       <Select 
                         value={customization.layout?.spacing || 'normal'} 
                         onValueChange={(value: any) => setCustomization(prev => ({
@@ -1153,7 +1321,7 @@ export default function AdvancedStoreCustomization() {
                         </div>
                         
                         <div className="flex items-center justify-between">
-                          <Label htmlFor="wishlist">قائم�� الأمنيات</Label>
+                          <Label htmlFor="wishlist">قائم��� الأمنيات</Label>
                           <Switch
                             id="wishlist"
                             checked={customization.pages?.enableWishlist || true}
@@ -1289,7 +1457,7 @@ export default function AdvancedStoreCustomization() {
                 <div className="border rounded-lg overflow-hidden">
                   <iframe
                     key={previewKey} // لإجبار إعادة تحميل iframe عند تغيير التخصيصات
-                    src={`/store/${store.id}?preview=true&ownerId=${userData?.uid}&storeId=${store.id}&customization=${encodeURIComponent(JSON.stringify(customization))}&_t=${previewKey}`}
+                    src={`/store/${store.subdomain}?preview=true&ownerId=${userData?.uid}&storeId=${store.id}&customization=${encodeURIComponent(JSON.stringify(customization))}&_t=${previewKey}`}
                     className={`w-full border-0 ${
                       previewMode === 'desktop' ? 'h-[800px]' :
                       previewMode === 'tablet' ? 'h-[600px] max-w-md mx-auto' :
